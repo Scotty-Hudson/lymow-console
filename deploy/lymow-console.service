@@ -1,0 +1,36 @@
+# systemd unit for lymow-console (rootless).
+# Install:  sudo cp deploy/lymow-console.service /etc/systemd/system/
+#           edit User=/home and the paths, then
+#   sudo systemctl daemon-reload && systemctl enable --now lymow-console
+#
+# The service binds 127.0.0.1 only; reach it from other machines with
+#   ssh -L 8384:127.0.0.1:8384 <this-host>
+
+[Unit]
+Description=lymow-console (Lymow robotic mower web console)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=scotty
+Group=scotty
+WorkingDirectory=/home/scotty/repos/lymow-console/backend
+ExecStart=/home/scotty/repos/lymow-console/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8384
+Environment=LYMOW_PROVIDER=sim
+Environment=LYMOW_DATA_DIR=/home/scotty/.local/share/lymow-console
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/scotty/.local/share/lymow-console
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

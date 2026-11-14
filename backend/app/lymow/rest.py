@@ -1,0 +1,160 @@
+# Derived from Lymow-One-MQTT (https://github.com/Mortimer452/Lymow-One-MQTT),
+# Copyright (c) 2026 Aaron Gibbs, MIT License — see LICENSE-lymow-one-mqtt.
+"""Lymow REST API client. Uses Cognito access_token in Authorization header.
+
+Endpoints documented in arch.md §4a. The integration only uses a small
+subset:
+- /device-list-query (config flow only)
+- /get-device-info (config flow + 15-min online poll)
+- /get-clean-history-collect (one-time backfill at install, optional)
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+from urllib.parse import quote
+
+import aiohttp
+
+from .auth import CognitoAuth
+from .const import API_ENDPOINTS
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def build_ota_object_key(latest_version: str, prefix: str | None) -> str:
+    """Join check-update's `prefix` and `latestVersion` into the S3 objectKey.
+
+    Firmware v2.1.50 (2026-08-13) introduced full/incremental OTA packages
+    stored under a per-version S3 prefix; check-update grew a `prefix`
+    field ("rk3588/v2.1.50/") and create-ota-job 500s ("UnknownError") on
+    the bare latestVersion the pre-2.1.50 flow sent. Verified live: the
+    joined key creates a working job (arch.md §4a). Older responses carry
+    no prefix — the bare key remains correct for them.
+
+    Pure concatenation, matching the app (3.0.8 decompiled.js:1626040 does
+    ``"".concat(prefix, latestVersion)`` with NO slash normalization — it
+    relies on the server always including the trailing slash in `prefix`,
+    as the observed "rk3588/v2.1.50/" does). We deliberately do NOT insert
+    a separator: diverging from the app's exact behavior risks breaking
+    where the app works.
+    """
+    if not prefix:
+        return latest_version
+    return prefix + latest_version
+
+
+def ota_create_job_path(thing_name: str, object_key: str) -> str:
+    """Build the create-ota-job path. objectKey may contain slashes now —
+    percent-encode it like the app does (encodeURIComponent)."""
+    return (
+        f"/create-ota-job?deviceThingName={quote(thing_name, safe='')}"
+        f"&objectKey={quote(object_key, safe='')}"
+    )
+
+
+class LymowREST:
+    def __init__(
+        self,
+        region: str,
+        auth: CognitoAuth,
+        session: aiohttp.ClientSession,
+    ) -> None:
+        self._region = region
+        self._auth = auth
+        self._session = session
+        self._ep = API_ENDPOINTS[region]
+
+    def _headers(self) -> dict:
+        return {
+            "Content-Type": "application/json",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Authorization": self._auth.access_token,
+        }
+
+    async def _get(self, api: str, path: str) -> Any:
+        await self._auth.ensure_valid()
+        url = self._ep[api] + path
+        async with self._session.get(url, headers=self._headers()) as r:
+            text = await r.text()
+            if r.status >= 400:
+                _LOGGER.warning("GET %s%s -> %s: %s", api, path, r.status, text)
+                return None
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return text
+
+    async def get_device_list(self) -> list[dict]:
+        """List devices bound to this account.
+
+        NOTE: ?p=validation is a session keep-alive that always returns [];
+        listing bound devices requires ?p=devices plus the Identity Pool id.
+        """
+        await self._auth.ensure_valid()  # populates identity_id
+        data = await self._get(
+            "deviceBindingApi",
+            f"/device-list-query?p=devices&identityId={self._auth.identity_id}",
+        )
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for k in ("data", "items", "devices", "list"):
+                if isinstance(data.get(k), list):
+                    return data[k]
+        return []
+
+    async def get_device_info(self, thing_name: str) -> dict:
+        """IP, MAC, fw versions, deviceState (online/offline)."""
+        data = await self._get(
+            "deviceProfileApi",
+            f"/get-device-info?deviceThingName={thing_name}",
+        )
+        return data or {}
+
+    async def check_update(self, thing_name: str) -> dict | None:
+        """Check for a firmware update. Returns {latestVersion, releaseNote}."""
+        data = await self._get(
+            "checkUpdateApi",
+            f"/check-update?deviceThingName={thing_name}",
+        )
+        return data if isinstance(data, dict) else None
+
+    async def create_ota_job(self, thing_name: str, object_key: str) -> str | None:
+        """Trigger an OTA update via AWS IoT Jobs. Returns the jobId.
+
+        object_key must be the FULL S3 key — for v2.1.50+ that means
+        prefix-joined via build_ota_object_key (the caller does this).
+        """
+        data = await self._get(
+            "createOtaJobApi",
+            ota_create_job_path(thing_name, object_key),
+        )
+        if isinstance(data, dict):
+            return data.get("jobId")
+        return None
+
+    async def get_ota_job_summary(
+        self, thing_name: str, job_id: str
+    ) -> dict | None:
+        """Poll OTA job status. Returns {status, statusDetails}."""
+        data = await self._get(
+            "createOtaJobApi",
+            f"/get-ota-job-summary?deviceThingName={thing_name}&jobId={job_id}",
+        )
+        return data if isinstance(data, dict) else None
+
+    async def get_clean_history(
+        self, thing_name: str, page: int = 0, size: int = 10
+    ) -> list[dict]:
+        """Mow-history records. page is 0-indexed (page=0 is most recent)."""
+        data = await self._get(
+            "s3Api",
+            f"/get-clean-history-collect?deviceThingName={thing_name}&page={page}&pageSize={size}",
+        )
+        if isinstance(data, dict) and isinstance(data.get("clean_history"), list):
+            return data["clean_history"]
+        if isinstance(data, list):
+            return data
+        return []

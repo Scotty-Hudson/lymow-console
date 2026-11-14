@@ -1,0 +1,26 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# node / vite
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# local secrets & runtime data
+.env
+session.key
+*.db
+*.db-wal
+*.db-shm
+
+# upstream reference clones (not shipped, large)
+research/
+
+# editor/OS noise
+.vscode/
+.idea/
+.DS_Store

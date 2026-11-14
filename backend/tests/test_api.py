@@ -1,0 +1,203 @@
+"""End-to-end API tests: auth, state, map, commands, settings, WS.
+
+Everything runs against SimulatedMower — these tests ALSO prove the
+command pipeline works with zero network dependencies outside ASGI.
+"""
+from __future__ import annotations
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+from starlette.testclient import TestClient
+
+from app.config import Settings
+from app.main import create_app
+
+
+@pytest.fixture
+def settings(tmp_path):
+    return Settings(
+        provider="sim",
+        data_dir=tmp_path,
+        session_secret="test-session-secret",
+        _env_file=None,
+    )
+
+
+@pytest.fixture
+def sync_client(settings):
+    app = create_app(settings)
+    with TestClient(app) as client:  # runs lifespan
+        yield client
+
+
+async def login(client: AsyncClient) -> None:
+    r = await client.post("/api/auth/login", json={"password": "console-pass"})
+    assert r.status_code == 200
+
+
+@pytest.fixture
+async def api(settings):
+    """Async client with lifespan running and a logged-in session."""
+    app = create_app(settings)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        async with app.router.lifespan_context(app):
+            await login(client)
+            yield client
+
+
+class TestAuth:
+    def test_setup_and_login_flow(self, sync_client):
+        r = sync_client.get("/api/auth/status")
+        assert r.status_code == 200
+        assert r.json() == {"needs_setup": True, "authenticated": False}
+        r = sync_client.post("/api/auth/login", json={"password": "first-pass"})
+        assert r.status_code == 200
+        r = sync_client.get("/api/auth/status")
+        assert r.json()["needs_setup"] is False
+        assert r.json()["authenticated"] is True
+
+    def test_wrong_password_rejected(self, sync_client):
+        sync_client.post("/api/auth/login", json={"password": "right-one"})
+        sync_client.post("/api/auth/logout")
+        r = sync_client.post("/api/auth/login", json={"password": "wrong"})
+        assert r.status_code == 401
+
+    def test_api_requires_auth(self, settings):
+        app = create_app(settings)
+        with TestClient(app) as client:
+            assert client.get("/api/state").status_code == 401
+            assert client.get("/api/map").status_code == 401
+            assert client.post(
+                "/api/commands/pause", json={}
+            ).status_code == 401
+
+
+class TestStateAndMap:
+    async def test_state_snapshot_shape(self, api):
+        r = await api.get("/api/state")
+        assert r.status_code == 200
+        snap = r.json()
+        assert snap["simulator"] is True
+        assert snap["online"] is True
+        assert snap["telemetry"]["battery"] == 72
+        assert snap["activity"] == "docked"
+        assert snap["allowed_actions"]["start_mowing"] is not None
+        assert snap["map_ready"] is True
+
+    async def test_map_document_has_zones_dock_and_gaps(self, api):
+        r = await api.get("/api/map")
+        m = r.json()
+        assert m["available"] is True
+        assert {z["name"] for z in m["zones"]} == {"Front Lawn", "Back Lawn"}
+        assert m["dock"]["x"] == pytest.approx(4.5)
+        feats = {u["feature"] for u in m["unsupported"]}
+        assert feats == {"no_go_zones", "mowing_path"}
+
+
+class TestCommands:
+    async def test_matrix_gating_rejects_pause_while_docked(self, api):
+        r = await api.post("/api/commands/pause")
+        assert r.status_code == 409
+
+    async def test_start_then_state_moves_to_mowing(self, api):
+        r = await api.post("/api/commands/start", json={})
+        assert r.status_code == 200
+        assert r.json()["outcome"] == "sent"
+        r = await api.get("/api/state")
+        assert r.json()["telemetry"]["work_status"] == 2  # WORK_STATUS_MOWING
+
+    async def test_zone_start_by_name(self, api):
+        r = await api.post("/api/commands/start", json={"zones": ["Back Lawn"]})
+        assert r.status_code == 200
+        r = await api.get("/api/state")
+        assert [z["name"] for z in r.json()["task_zones"]] == ["Back Lawn"]
+
+    async def test_zone_start_unknown_zone_rejected(self, api):
+        r = await api.post("/api/commands/start", json={"zones": ["Nope"]})
+        assert r.status_code == 409
+
+    async def test_destructive_requires_confirm(self, api):
+        r = await api.post("/api/commands/dock-cancel", json={"confirm": False})
+        assert r.status_code == 409
+        r = await api.post("/api/commands/dock-cancel", json={"confirm": True})
+        assert r.status_code == 200
+
+    async def test_force_reinit_requires_confirm(self, api):
+        assert (await api.post("/api/commands/force-reinit", json={})).status_code == 409
+        r = await api.post("/api/commands/force-reinit", json={"confirm": True})
+        assert r.status_code == 200
+
+    async def test_every_command_is_audited(self, api):
+        await api.post("/api/commands/pause")          # rejected (docked)
+        await api.post("/api/commands/start", json={})
+        await api.post("/api/commands/dock-cancel", json={"confirm": True})
+        rows = (await api.get("/api/audit")).json()
+        actions = {r["action"] for r in rows}
+        assert "start" in actions and "dock_cancel" in actions
+        outcomes = {r["outcome"] for r in rows}
+        assert any(o.startswith("rejected") for o in outcomes)
+        assert all(r["simulator"] is True for r in rows)
+
+    async def test_rr_config_roundtrip(self, api):
+        r = await api.put("/api/config/return-to-dock", json={
+            "enableRr": True, "rechargeBat": 20, "resumeBat": 95,
+        })
+        assert r.status_code == 200
+
+    async def test_rr_config_validation(self, api):
+        r = await api.put("/api/config/return-to-dock", json={
+            "enableRr": True, "rechargeBat": 250,
+        })
+        assert r.status_code == 422
+
+    async def test_query_map_and_schedules(self, api):
+        r = await api.post("/api/commands/query-map")
+        assert r.status_code == 200
+        r = await api.post("/api/commands/query-schedules")
+        assert r.status_code == 200
+
+
+class TestSettings:
+    async def test_cloud_credentials_write_only(self, api):
+        r = await api.put("/api/settings/cloud", json={
+            "lymow_username": "user@example.com",
+            "lymow_password": "super-secret",
+            "device_thing_name": "thing-9",
+        })
+        assert r.status_code == 200
+        r = await api.get("/api/settings")
+        s = r.json()
+        assert s["lymow_username"] == "user@example.com"
+        assert s["lymow_password"] == "***"
+        assert "super-secret" not in r.text
+        assert "console_password_hash" not in s
+        r = await api.delete("/api/settings/cloud")
+        assert r.status_code == 200
+
+
+class TestWebSocket:
+    def test_anonymous_ws_closed(self, sync_client):
+        from starlette.websockets import WebSocketDisconnect
+
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with sync_client.websocket_connect("/ws/telemetry") as ws:
+                ws.receive_json()
+        assert exc.value.code == 4401
+
+    def test_ws_delivers_state_with_token(self, sync_client):
+        token = sync_client.app.state.session_signer.create()  # type: ignore[attr-defined]
+        with sync_client.websocket_connect(f"/ws/telemetry?token={token}") as ws:
+            msg = ws.receive_json()
+        assert msg["type"] == "state"
+        assert msg["payload"]["simulator"] is True
+        assert msg["payload"]["telemetry"]["battery"] == 72
+
+
+class TestCamera:
+    async def test_camera_status_simulated(self, api):
+        r = await api.get("/api/camera/status")
+        c = r.json()
+        assert c["mode"] == "simulated"
+        assert c["available"] is True and c["live"] is True

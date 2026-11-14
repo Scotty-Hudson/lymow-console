@@ -1,56 +1,12 @@
-"""Typed API models for the console HTTP/WS contract.
+"""Typed API request models for the console HTTP contract.
 
-These mirror the JSON shapes the frontend consumes; the state document
-is produced by MowerStateService.snapshot() and pushed verbatim over
-the WebSocket, so this module is the single place both sides trust.
+Response shapes are produced by MowerStateService.snapshot() /
+MapService.get_map() and mirrored (by hand) in frontend/src/types.ts;
+requests are validated here.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-
-
-# ── responses ───────────────────────────────────────────────────
-
-
-class TelemetryOut(BaseModel):
-    """Flat telemetry field table (see app/lymow/telemetry.py)."""
-    model_config = {"extra": "allow"}
-
-
-class StateSnapshotOut(BaseModel):
-    """Dashboard snapshot pushed on every state change."""
-    device_id: str
-    online: bool = False
-    simulator: bool = False
-    stale: bool = True              # no fresh telemetry inside window
-    map_ready: bool = False
-    activity: str | None = None
-    status: dict = Field(default_factory=dict)
-    telemetry: TelemetryOut = Field(default_factory=TelemetryOut)
-    allowed_actions: dict[str, int | None] = Field(default_factory=dict)
-    task_zones: list[dict] = Field(default_factory=list)
-    pose: dict | None = None
-    last_update_epoch: float | None = None
-
-
-class MapDocumentOut(BaseModel):
-    available: bool = False
-    zones: list[dict] = Field(default_factory=list)
-    channels: list[dict] = Field(default_factory=list)
-    dock: dict | None = None
-    pose: dict | None = None
-    mower_latlon: dict | None = None
-    enu_base: dict | None = None
-    current_zone: str | None = None
-    frame: str | None = None
-    # Documented gaps in the community protocol (read-only console):
-    unsupported: list[dict] = Field(default_factory=list)
-
-
-class CommandResultOut(BaseModel):
-    action: str
-    outcome: str                    # sent | sent-unconfirmed
-    confirmed: bool
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── requests ────────────────────────────────────────────────────
@@ -67,10 +23,14 @@ class CommandIn(BaseModel):
 
 
 class ZoneConfigIn(BaseModel):
-    """Auto-recharge/resume thresholds — verified setRR fields only."""
-    enable_rr: bool
-    recharge_bat: int | None = Field(default=None, ge=1, le=100)
-    resume_bat: int | None = Field(default=None, ge=1, le=100)
+    """Auto-recharge/resume thresholds — verified setRR fields only.
+
+    Field names match the JSON the frontend sends (camelCase)."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    enable_rr: bool = Field(default=True, alias="enableRr")
+    recharge_bat: int | None = Field(default=None, ge=1, le=100, alias="rechargeBat")
+    resume_bat: int | None = Field(default=None, ge=1, le=100, alias="resumeBat")
 
 
 class CloudSettingsIn(BaseModel):

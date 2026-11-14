@@ -18,11 +18,9 @@ from app.lymow.const import USER_CTRL_CLEAN, USER_CTRL_QUERY_MAP
 from app.lymow.protocol import (
     decode_pboutput,
     decode_pboutput_envelope,
-    decode_schedules,
     encode_query_map,
     encode_start_zones,
     encode_userctrl,
-    extract_error_codes,
     parse_zone_catalog,
     populated_fields,
     unwrap_envelope,
@@ -72,11 +70,11 @@ class TestRealFixtures:
         assert "Pool" in names and "Front yard" in names
         assert "8FyN5qA4" in hashes
 
-    def test_schedule_response_decodes_one_schedule(self):
+    def test_schedule_response_fixture_is_a_schedule_reply(self):
         out = decode_pboutput_envelope(load_fixture_bytes("schedule_response.bin"))
         assert out.schedule.ByteSize() > 0
-        scheds = decode_schedules(out.schedule)
-        assert len(scheds) == 1
+        # (Decoding individual schedule entries is not surfaced by the
+        # console — the mower's schedules are managed in the official app.)
 
     def test_unknown_field_roundtrip_is_stable(self):
         """The btMap blob contains fields missing from the .proto schema;
@@ -121,17 +119,6 @@ class TestEncoders:
         msg = pb.PbInput()
         msg.ParseFromString(unwrap_envelope(env.encode("utf-8")))
         assert [z.basicInfo.hashId for z in msg.map.goZones] == ["back01"]
-
-
-class TestErrorCodes:
-    def test_extract_error_codes(self):
-        out = pb.PbOutput()
-        out.errorCodes.extend([21, 47])
-        assert extract_error_codes(out) == [21, 47]
-
-    def test_extract_empty_when_absent(self):
-        out = pb.PbOutput()
-        assert extract_error_codes(out) == []
 
 
 class TestCatalogReembedding:

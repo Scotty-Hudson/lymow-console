@@ -101,3 +101,47 @@ class TestTelemetryDerivation:
         assert t["vertical_accuracy_m"] == pytest.approx(0.028)
         assert t["position_quality"] == 3
         assert t["num_satellites"] == 10
+
+
+class TestStateServiceWiring:
+    """MowerStateService <-> provider contracts: refire hook, shared state
+    dict, REST firmware fallback, and the empty-telemetry button gate."""
+
+    async def test_provider_wiring_refire_fw_and_unknown_gate(self):
+        from app.services.provider import MowerProvider
+        from app.services.state_service import MowerStateService
+
+        class WatchingProvider(MowerProvider):
+            def __init__(self):
+                super().__init__("stub")
+                self.refires: list[bool] = []
+                self._state_ref: dict = {}
+                self.rest_firmware_version = "v9.9.9"
+
+            async def start(self): pass
+            async def stop(self): pass
+            def is_connected(self): return True
+            async def publish_pbinput(self, raw): pass
+
+            def maybe_refire_query_map(self, cleanreport_arrived=False):
+                self.refires.append(cleanreport_arrived)
+
+        p = WatchingProvider()
+        st = MowerStateService(p)
+        st.attach()
+        assert p._state_ref is st.state, "refire rule must read the live state dict"
+
+        snap = st.snapshot()
+        assert snap["allowed_actions"] == {"start_mowing": None, "pause": None,
+                                           "dock": None}, "no telemetry -> no buttons"
+
+        m = _msg()
+        m.robotInfo.workStatus = 2  # MOWING
+        m.robotInfo.robotStatus = 2
+        st._merge(m)
+        assert p.refires == [False], "every merge must consult the refire rule"
+
+        snap2 = st.snapshot()
+        assert snap2["telemetry"]["fw_version"] == "v9.9.9", "REST fw fallback"
+        assert snap2["allowed_actions"]["start_mowing"] is None  # mowing: no Start
+        assert snap2["allowed_actions"]["pause"] is not None

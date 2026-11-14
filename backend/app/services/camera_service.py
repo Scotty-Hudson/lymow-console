@@ -49,6 +49,7 @@ class CameraService:
         self._last_frame_ts: float = 0.0
         self._reader_task: asyncio.Task | None = None
         self._unavailable_reason: str | None = None
+        self._relay_active = False  # only one pipe-reader allowed at a time
         self._stopping = False
 
     @staticmethod
@@ -115,6 +116,10 @@ class CameraService:
             async for frame in self._sim_stream():
                 yield frame
             return
+        if self._relay_active:
+            # Two concurrent relay loops would split one stdout pipe and
+            # corrupt every frame — refuse the second viewer.
+            raise CameraUnavailable("camera feed already open — close the other tab first")
         self._ensure_ffmpeg()
         async for frame in self._relay_stream():
             yield frame
@@ -179,10 +184,18 @@ class CameraService:
         assert self._proc is not None and self._proc.stdout is not None
         loop = asyncio.get_running_loop()
         buf = b""
+        self._relay_active = True
+        try:
+            async for frame in self._read_frames(loop, buf):
+                yield frame
+        finally:
+            self._relay_active = False
+
+    async def _read_frames(self, loop, buf: bytes) -> AsyncIterator[bytes]:
         while not self._stopping:
             chunk = await loop.run_in_executor(
                 None, lambda: self._proc.stdout.read(65536)
-                if self._proc.stdout else b""
+                if self._proc and self._proc.stdout else b""
             )
             if not chunk:
                 self._unavailable_reason = "RTSP stream ended (mower camera offline?)"

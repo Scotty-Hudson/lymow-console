@@ -48,6 +48,10 @@ class MowerStateService:
         """Install ourselves as the provider's message sink."""
         self.provider.on_pboutput = self._on_pboutput
         self.provider.on_connection_changed = self._on_connection_changed
+        # Real provider's QUERY_MAP refire rule reads robotInfo/zone_catalog
+        # straight from our live state dict.
+        if hasattr(self.provider, "_state_ref"):
+            self.provider._state_ref = self.state  # noqa: SLF001
 
     def add_listener(self, cb: Callable[[dict], None]) -> None:
         self._listeners.append(cb)
@@ -93,21 +97,31 @@ class MowerStateService:
         lstate.compute_current_zone_cache(self.state)
 
         cr = self.state.get("cleanReport")
+        new_report = False
         if cr is not None:
             key = (
                 getattr(cr, "cleanStartTime", None),
                 getattr(cr, "mowEndType", None),
                 getattr(cr.cleanInfo, "cleanTime", 0) if cr.ByteSize() else 0,
             )
-            if key != self._last_clean_report_key and self.on_clean_report:
+            if key != self._last_clean_report_key:
+                new_report = True
                 self._last_clean_report_key = key
-                self.on_clean_report({
-                    "start_time": key[0],
-                    "end_type": key[1],
-                    "duration_s": cr.cleanInfo.cleanTime,
-                    "area_m2": cr.cleanInfo.cleanArea,
-                    "used_battery": getattr(cr, "usedBattery", None),
-                })
+                if self.on_clean_report:
+                    self.on_clean_report({
+                        "start_time": key[0],
+                        "end_type": key[1],
+                        "duration_s": cr.cleanInfo.cleanTime,
+                        "area_m2": cr.cleanInfo.cleanArea,
+                        "used_battery": getattr(cr, "usedBattery", None),
+                    })
+
+        # Upstream refire rule: re-ask for the zone catalog when a task
+        # starts or completes, so task-zone highlights don't go stale on
+        # schedules we didn't start ourselves. No-op on the simulator.
+        refire = getattr(self.provider, "maybe_refire_query_map", None)
+        if refire is not None:
+            refire(cleanreport_arrived=new_report)
 
     def _on_connection_changed(self, online: bool) -> None:
         self.transport_online = online
@@ -136,12 +150,20 @@ class MowerStateService:
             rest_ip = getattr(self.provider, "rest_ip_address", None)
             if rest_ip:
                 t["ip_address"] = rest_ip
+        if t.get("fw_version") is None:
+            rest_fw = getattr(self.provider, "rest_firmware_version", None)
+            if rest_fw:
+                t["fw_version"] = rest_fw
         status = ltelemetry.describe_status(t)
-        row = state_matrix.lookup(
-            work_status=t.get("work_status") or 0,
-            robot_status=t.get("robot_status") or 0,
-            is_recharging=bool(t.get("is_recharging")),
-        )
+        if self.state.get("robotInfo") is None:
+            # No telemetry yet: unknown state — offer NO buttons.
+            row = state_matrix.DEFAULT_ROW
+        else:
+            row = state_matrix.lookup(
+                work_status=t.get("work_status") or 0,
+                robot_status=t.get("robot_status") or 0,
+                is_recharging=bool(t.get("is_recharging")),
+            )
         catalog = self.state.get("zone_catalog")
         task_zones = [
             {"hash_id": z.hash_id, "name": z.name, "mow_order": z.mow_order}

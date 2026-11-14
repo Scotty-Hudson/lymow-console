@@ -58,6 +58,12 @@ class TestAuth:
         assert r.json()["needs_setup"] is False
         assert r.json()["authenticated"] is True
 
+    def test_first_run_rejects_short_password(self, sync_client):
+        r = sync_client.post("/api/auth/login", json={"password": "short"})
+        assert r.status_code == 422  # the >=8 rule is enforced server-side
+        r = sync_client.get("/api/auth/status")
+        assert r.json()["needs_setup"] is True, "rejected attempt must not seed a password"
+
     def test_wrong_password_rejected(self, sync_client):
         sync_client.post("/api/auth/login", json={"password": "right-one"})
         sync_client.post("/api/auth/logout")
@@ -80,7 +86,7 @@ class TestAuth:
                      session_secret="k", _env_file=None)
         app = create_app(s)
         with TestClient(app) as client:
-            client.post("/api/auth/login", json={"password": "pw"})
+            client.post("/api/auth/login", json={"password": "console-pw-1"})
             snap = client.get("/api/state").json()
             assert snap["simulator"] is False
             assert snap["online"] is False
@@ -88,6 +94,9 @@ class TestAuth:
             # control commands refuse cleanly (transport not connected)
             r = client.post("/api/commands/pause", json={})
             assert r.status_code == 409  # matrix: unknown state, no buttons
+            # with empty telemetry Start must be refused too, not published blind
+            r = client.post("/api/commands/start", json={})
+            assert r.status_code == 409
 
 
 class TestStateAndMap:
@@ -165,6 +174,10 @@ class TestCommands:
     async def test_rr_config_validation(self, api):
         r = await api.put("/api/config/return-to-dock", json={
             "enableRr": True, "rechargeBat": 250,
+        })
+        assert r.status_code == 422
+        r = await api.put("/api/config/return-to-dock", json={
+            "enableRr": True, "rechargeBat": "abc",  # not a number -> 422, not a 500
         })
         assert r.status_code == 422
 
@@ -329,7 +342,7 @@ class TestGoogleSignIn:
         asyncio.run(seed())
         app = create_app(s)
         with TestClient(app) as client:
-            client.post("/api/auth/login", json={"password": "pw"})
+            client.post("/api/auth/login", json={"password": "console-pw-1"})
             snap = client.get("/api/state").json()
             assert snap["online"] is False
 

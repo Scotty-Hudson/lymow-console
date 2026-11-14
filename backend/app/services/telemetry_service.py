@@ -29,10 +29,6 @@ class TelemetryHub:
     def unsubscribe(self, q: asyncio.Queue[dict]) -> None:
         self._clients.discard(q)
 
-    @property
-    def client_count(self) -> int:
-        return len(self._clients)
-
     def publish(self, snapshot: dict) -> None:
         """Thread-safe-ish entrypoint used as a state-service listener."""
         if not self._clients:

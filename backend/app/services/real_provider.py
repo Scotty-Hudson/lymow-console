@@ -69,10 +69,14 @@ class RealMowerProvider(MowerProvider):
         self._rest_poll_task: asyncio.Task | None = None
         self._shutting_down = False
         self._reconnecting = False
-        self._state_ref: dict[str, Any] = {}  # set by MowerStateService
-        # Mower LAN IP from the REST device info (authoritative fallback:
-        # the mower only publishes deviceInfo on the MQTT feed sporadically).
+        # Shared with MowerStateService.attach() (its live state dict) so
+        # maybe_refire_query_map can watch workStatus/catalog transitions.
+        self._state_ref: dict[str, Any] = {}
+        # Mower LAN IP + firmware version from the REST device info
+        # (authoritative fallback: the mower only publishes deviceInfo on
+        # the MQTT feed sporadically, and fw v2.1.51.x never).
         self.rest_ip_address: str | None = None
+        self.rest_firmware_version: str | None = None
 
     # ── Lifecycle ───────────────────────────────────────────────
 
@@ -213,8 +217,6 @@ class RealMowerProvider(MowerProvider):
             ip = info.get("ipAddress") or info.get("ip_address")
             if ip:
                 self.rest_ip_address = ip
-                self._state_ref.setdefault("rest_ip_address", ip)
-                self._state_ref["rest_ip_address"] = ip
             fw = (
                 info.get("softwareVersion")
                 or info.get("software_version")
@@ -222,7 +224,7 @@ class RealMowerProvider(MowerProvider):
                 or info.get("fw_version")
             )
             if fw and isinstance(fw, str):
-                self._state_ref["rest_firmware_version"] = fw
+                self.rest_firmware_version = fw
         self.on_connection_changed(self.is_connected())
 
     # ── Reconnect (fresh creds + freshly signed WSS URL) ────────

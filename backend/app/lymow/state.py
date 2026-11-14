@@ -8,7 +8,6 @@ just provides the merge and derivation logic.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from math import cos, hypot, radians
 from typing import Any
 
@@ -36,25 +35,6 @@ def enu_to_lla(ebp, pose) -> tuple[float, float] | None:
     lat = base_lat + (pose.y / 111111.0)
     lon = ebp.longitude + (pose.x / (111111.0 * cos(radians(base_lat))))
     return (lat, lon)
-
-
-def polygon_area(polygon: list[tuple[float, float]]) -> float:
-    """Compute the area of a 2D polygon using the shoelace formula.
-
-    Polygon points are local-frame meters (the same x/y coordinate space
-    that the mower's pose lives in), so the result is square meters.
-    Handles concave shapes correctly. Returns 0.0 for degenerate inputs
-    (fewer than 3 points).
-    """
-    n = len(polygon)
-    if n < 3:
-        return 0.0
-    s = 0.0
-    for i in range(n):
-        x1, y1 = polygon[i]
-        x2, y2 = polygon[(i + 1) % n]
-        s += x1 * y2 - x2 * y1
-    return abs(s) * 0.5
 
 
 def point_in_polygon(x: float, y: float, polygon: list[tuple[float, float]]) -> bool:
@@ -471,72 +451,6 @@ def _channel_descriptor(ch, catalog) -> str:
     return f"{n1} → {n2}"
 
 
-def _has_field(msg, name: str) -> bool:
-    """HasField with graceful fallback for fields that don't track presence."""
-    try:
-        return msg.HasField(name)
-    except (ValueError, AttributeError):
-        # Proto3 implicit-presence scalar; treat truthy values as "set".
-        return bool(getattr(msg, name, None))
-
-
-def active_cut_config(state_dict: dict[str, Any]) -> dict[str, Any]:
-    """Walk schedule_config -> zone_config -> runtime_config and return active cut params.
-
-    Per arch.md §6c, cut height/speed/move speed cascade from per-task
-    schedule overrides → per-zone PbZoneConfig → global PbRunTimeConfig.
-
-    Note on PbRunTimeConfig vs PbRobotConfig: the global "runtime config"
-    that carries cutHeight, cutSpeed, AND moveSpeed is `PbRunTimeConfig`,
-    nested at `PbMap.runTimeConfig` (delivered inside QUERY_MAP responses).
-    `PbRobotConfig` is a different type (rcCutHeight, rcCutSpeed, no
-    moveSpeed) used elsewhere. The zone catalog parser extracts PbRunTimeConfig
-    onto `ZoneCatalog.runtime_config`; that is what we read here.
-
-    Returns dict with keys: cut_speed (int 3-6 or None), cut_height (int mm),
-    move_speed (float m/s or None).
-    """
-    result: dict[str, Any] = {"cut_speed": None, "cut_height": None, "move_speed": None}
-
-    current_zone = zone_at_pose(state_dict)
-    active_schedule = state_dict.get("active_schedule")  # PbSchedule of currently-running task, if any
-
-    # Tier 1: schedule override per-zone
-    if current_zone is not None and active_schedule is not None:
-        for sc in getattr(active_schedule, "config", []):
-            if sc.hashId == current_zone.hash_id:
-                if _has_field(sc, "cutHeight"):
-                    result["cut_height"] = sc.cutHeight
-                if _has_field(sc, "moveSpeed"):
-                    result["move_speed"] = sc.moveSpeed
-                # PbScheduleConfig has no cutSpeed, fall through to zone for that
-                break
-
-    # Tier 2: per-zone PbZoneConfig from catalog
-    if current_zone is not None:
-        zc = getattr(current_zone, "zone_config", None)
-        if zc is not None:
-            if result["cut_speed"] is None and _has_field(zc, "cutSpeed"):
-                result["cut_speed"] = zc.cutSpeed
-            if result["cut_height"] is None and _has_field(zc, "cutHeight"):
-                result["cut_height"] = zc.cutHeight
-            if result["move_speed"] is None and _has_field(zc, "moveSpeed"):
-                result["move_speed"] = zc.moveSpeed
-
-    # Tier 3: global PbRunTimeConfig (carried on ZoneCatalog from QUERY_MAP)
-    catalog = state_dict.get("zone_catalog")
-    rtc = getattr(catalog, "runtime_config", None) if catalog is not None else None
-    if rtc is not None:
-        if result["cut_speed"] is None and _has_field(rtc, "cutSpeed"):
-            result["cut_speed"] = rtc.cutSpeed
-        if result["cut_height"] is None and _has_field(rtc, "cutHeight"):
-            result["cut_height"] = rtc.cutHeight
-        if result["move_speed"] is None and _has_field(rtc, "moveSpeed"):
-            result["move_speed"] = rtc.moveSpeed
-
-    return result
-
-
 def resolve_zones(catalog, inputs: list[str]) -> list[str]:
     """Convert a list of zone names or hashIds into canonical hashIds.
 
@@ -578,29 +492,3 @@ def resolve_zones(catalog, inputs: list[str]) -> list[str]:
             f"Unknown zone: {raw!r}. Known zones: {', '.join(known)}"
         )
     return resolved
-
-
-def resolve_online(
-    rest_online: bool,
-    last_mqtt_at: datetime | None,
-    now: datetime | None = None,
-    mqtt_recency_window: timedelta = timedelta(minutes=5),
-) -> bool:
-    """Combine REST and MQTT signals into a single online truth.
-
-    Per spec §7.3: REST is authoritative, BUT a fresh MQTT broadcast
-    (< mqtt_recency_window old) overrides a stale REST -> offline reading.
-    """
-    if rest_online:
-        return True
-    # REST says offline. Check for fresh MQTT activity.
-    if last_mqtt_at is None:
-        return False
-    # Coerce naive datetimes to UTC — defensive, matches how callers should pass UTC-aware values.
-    if last_mqtt_at.tzinfo is None:
-        last_mqtt_at = last_mqtt_at.replace(tzinfo=UTC)
-    if now is None:
-        now = datetime.now(UTC)
-    if (now - last_mqtt_at) < mqtt_recency_window:
-        return True  # MQTT activity overrides stale REST
-    return False

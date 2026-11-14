@@ -50,6 +50,13 @@ class Settings(BaseSettings):
             raise ValueError("LYMOW_PROVIDER must be 'sim' or 'real'")
         return v
 
+    @field_validator("data_dir", mode="before")
+    @classmethod
+    def _expand_tilde(cls, v):
+        # ".env.example" ships LYMOW_DATA_DIR=~/.local/... — Path("~")
+        # would otherwise create a literal "~" folder inside the cwd.
+        return Path(v).expanduser() if isinstance(v, str) else v
+
     def resolved_session_secret(self) -> str:
         """Session signing key: env override or generated-once file."""
         if self.session_secret:

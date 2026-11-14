@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +19,11 @@ def make_settings(tmp_path, **overrides):
 
 
 class TestDefaults:
+    def test_data_dir_expands_tilde(self):
+        """LYMOW_DATA_DIR=~/.local/... must not create a literal '~' dir."""
+        s = Settings(_env_file=None, data_dir="~/.lymow-console-test")
+        assert s.data_dir == Path.home() / ".lymow-console-test"
+
     def test_localhost_only_default_bind(self, tmp_path):
         s = make_settings(tmp_path)
         assert s.host == "127.0.0.1"

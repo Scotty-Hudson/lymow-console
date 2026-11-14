@@ -255,3 +255,33 @@ class TestStateBroadcastFields:
         assert msg.deviceInfo.sn == mower.serial
         assert msg.netDetailInfo.wifiIp == mower.ip
         assert 0.0 <= msg.cleanInfo.cleanPercent <= 1.0
+
+
+class TestCommandWatchdog:
+    """A silent firmware reject is reported honestly and NEVER retried."""
+
+    async def test_silent_reject_unconfirmed_and_no_retry(self, sim, tmp_path):
+        from app.db import Database
+        from app.services.command_service import CommandService
+        from app.services.state_service import MowerStateService
+
+        mower, _ = sim
+        await mower.start()
+        state = MowerStateService(mower)
+        state.attach()
+        db = Database(tmp_path / "audit.db")
+        await db.open()
+        cs = CommandService(mower, state, db)
+
+        before = mower.publish_count
+        # RESUME while docked-idle: sim ignores it (no saved task) — the
+        # exact shape of a firmware silent-reject. Gate bypassed on purpose:
+        # the watchdog, not the matrix, is under test here.
+        res = await cs._send("resume", USER_CTRL_RESUME,
+                             encode_userctrl(USER_CTRL_RESUME), None)
+        assert res["confirmed"] is False
+        assert res["outcome"] == "sent-unconfirmed"
+        assert mower.publish_count == before + 1, "must NEVER auto-retry"
+        rows = await db.list_audit()
+        assert rows[0]["outcome"] == "sent-unconfirmed"
+        await db.close()

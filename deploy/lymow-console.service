@@ -1,6 +1,7 @@
-# systemd unit for lymow-console (rootless).
+# systemd system unit for lymow-console (installed as root; the app
+# process itself runs as an unprivileged User=).
 # Install:  sudo cp deploy/lymow-console.service /etc/systemd/system/
-#           edit User=/home and the paths, then
+#           edit User= and the paths, then
 #   sudo systemctl daemon-reload && systemctl enable --now lymow-console
 #
 # The service binds 127.0.0.1 only; reach it from other machines with
@@ -17,7 +18,8 @@ User=scotty
 Group=scotty
 WorkingDirectory=/home/scotty/repos/lymow-console/backend
 ExecStart=/home/scotty/repos/lymow-console/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8384 --timeout-graceful-shutdown 5
-Environment=LYMOW_PROVIDER=sim
+# sim = toy mower, never touches the real one; real = your actual mower.
+Environment=LYMOW_PROVIDER=real
 Environment=LYMOW_DATA_DIR=/home/scotty/.local/share/lymow-console
 Restart=on-failure
 RestartSec=5

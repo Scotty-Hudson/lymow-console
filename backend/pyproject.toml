@@ -9,10 +9,9 @@ license = { text = "MIT" }
 #   https://github.com/Mortimer452/Lymow-One-MQTT
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
+    "uvicorn[standard]>=0.30",  # brings its own websockets support
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
-    "websockets>=12",
     "aiohttp>=3.9",
     "paho-mqtt>=2.1",
     "protobuf>=6.31.1",

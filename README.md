@@ -13,7 +13,8 @@ browser ──HTTP/WS── backend (FastAPI, localhost:8384) ──MQTT/WSS+RES
 ## Features
 
 - **Dashboard** — activity, battery/charging, task progress + zones,
-  firmware state, errors, RTK quality, WiFi/LTE, stale-telemetry badge.
+  firmware state, errors, positioning quality (±cm from the mower's own
+  accuracy report), WiFi/LTE, stale-telemetry badge.
 - **Live updates** over a WebSocket (with reconnect + fallback polling).
 - **Map (read-only)** — zones, docking channels, dock, live mower pose
   with accuracy circle, active-zone/task highlights, multi-zone start.
@@ -103,7 +104,7 @@ session cookie anyway.
 ## Testing
 
 ```bash
-cd backend && .venv/bin/python -m pytest tests -q     # 125 tests
+cd backend && .venv/bin/python -m pytest tests -q     # 155 tests
 ```
 
 Highlights:

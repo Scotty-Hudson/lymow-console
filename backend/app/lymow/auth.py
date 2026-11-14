@@ -320,23 +320,3 @@ class CognitoAuth:
                     raise
         if self._creds_expiring():
             await self.get_aws_credentials()
-
-    # ── Persistence ─────────────────────────────────────────────
-
-    def to_dict(self) -> dict:
-        return {
-            "id_token": self.id_token,
-            "access_token": self.access_token,
-            "refresh_token": self.refresh_token,
-            "_email": self._email,
-            "_is_federated": self._is_federated,
-            "identity_id": self.identity_id,
-        }
-
-    def from_dict(self, d: dict) -> None:
-        self.id_token = d.get("id_token")
-        self.access_token = d.get("access_token")
-        self.refresh_token = d.get("refresh_token")
-        self._email = d.get("_email")
-        self._is_federated = d.get("_is_federated", False)
-        self.identity_id = d.get("identity_id")

@@ -1,14 +1,9 @@
 # Derived from Lymow-One-MQTT (https://github.com/Mortimer452/Lymow-One-MQTT),
 # Copyright (c) 2026 Aaron Gibbs, MIT License — see LICENSE-lymow-one-mqtt.
-"""AWS SigV4 signing helpers — header form for REST + query-string for MQTT WSS.
+"""AWS SigV4 query-string signing for the MQTT WSS connect (arch.md §4b).
 
-Header form: signs a request via Authorization + x-amz-date headers.
-Query-string form (presigned URL): signs the URL itself via X-Amz-* params.
-
-The Lymow IoT WSS connection uses the query-string form (arch.md §4b);
-REST API Gateway uses Cognito access tokens directly (no SigV4 — see auth.py).
-SigV4 here is for: AWS IoT WSS connect, IoT Data plane HTTPS (legacy/unused),
-and S3 GETs against the user-data bucket (future feature).
+Lymow REST uses Cognito access tokens directly (no SigV4); the IoT WSS
+connection is authorized with a presigned /mqtt path — presigned_ws_path.
 """
 from __future__ import annotations
 
@@ -30,67 +25,6 @@ def signing_key(secret: str, datestamp: str, region: str, service: str) -> bytes
     k = _sign(k, region)
     k = _sign(k, service)
     return _sign(k, "aws4_request")
-
-
-def sigv4_headers(
-    method: str,
-    url: str,
-    payload: bytes,
-    service: str,
-    region: str,
-    access_key: str,
-    secret_key: str,
-    session_token: str | None = None,
-) -> dict[str, str]:
-    """Header-form SigV4. Returns headers including Authorization."""
-    parsed = urllib.parse.urlparse(url)
-    host = parsed.netloc
-    canonical_uri = parsed.path or "/"
-    canonical_qs = parsed.query
-
-    now = datetime.now(UTC)
-    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
-    date_stamp = now.strftime("%Y%m%d")
-    body_hash = hashlib.sha256(payload).hexdigest()
-
-    hdrs: dict[str, str] = {
-        "host": host,
-        "x-amz-date": amz_date,
-        "x-amz-content-sha256": body_hash,
-    }
-    if session_token:
-        hdrs["x-amz-security-token"] = session_token
-
-    signed_list = sorted(hdrs)
-    canonical_hdrs = "".join(f"{k}:{hdrs[k]}\n" for k in signed_list)
-    signed_headers = ";".join(signed_list)
-
-    canonical_req = "\n".join([
-        method.upper(), canonical_uri, canonical_qs,
-        canonical_hdrs, signed_headers, body_hash,
-    ])
-
-    scope = f"{date_stamp}/{region}/{service}/aws4_request"
-    string_to_sign = "\n".join([
-        "AWS4-HMAC-SHA256", amz_date, scope,
-        hashlib.sha256(canonical_req.encode()).hexdigest(),
-    ])
-
-    sig = hmac.new(
-        signing_key(secret_key, date_stamp, region, service),
-        string_to_sign.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-
-    return {
-        "Authorization": (
-            f"AWS4-HMAC-SHA256 Credential={access_key}/{scope}, "
-            f"SignedHeaders={signed_headers}, Signature={sig}"
-        ),
-        "x-amz-date": amz_date,
-        "x-amz-content-sha256": body_hash,
-        **({"x-amz-security-token": session_token} if session_token else {}),
-    }
 
 
 def presigned_ws_path(

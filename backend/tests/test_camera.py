@@ -8,7 +8,11 @@ import zlib
 
 import pytest
 
-from app.services.camera_service import CameraService, render_sim_frame
+from app.services.camera_service import (
+    CameraService,
+    CameraUnavailable,
+    render_sim_frame,
+)
 from app.services.simulator import SimulatedMower
 from app.services.state_service import MowerStateService
 
@@ -70,6 +74,20 @@ class TestSimFrames:
             cam = CameraService(mower, state)
             url = cam._rtsp_url()
             assert url.startswith("rtsp://192.168.50.42:10022/")
+        finally:
+            mower.simulator = True
+
+    async def test_relay_busy_refuses_second_concurrent_viewer(self, sim_state):
+        """Two relay readers on one ffmpeg stdout pipe would split frames."""
+        mower, state = sim_state
+        mower.simulator = False
+        try:
+            cam = CameraService(mower, state)
+            cam._relay_active = True
+            with pytest.raises(CameraUnavailable) as exc:
+                async for _ in cam.stream():
+                    pass
+            assert "other tab" in exc.value.reason
         finally:
             mower.simulator = True
 

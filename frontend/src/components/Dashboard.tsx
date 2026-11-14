@@ -118,7 +118,7 @@ export default function Dashboard({ snap }: { snap: StateSnapshot | null }) {
         <div className="chip-row">
           {snap.task_zones.map((z) => (
             <span key={z.hash_id} className="chip">
-              #{z.mow_order + 1} {z.name}
+              #{z.mow_order} {z.name}
             </span>
           ))}
         </div>

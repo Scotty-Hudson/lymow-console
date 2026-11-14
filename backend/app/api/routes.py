@@ -19,6 +19,7 @@ from app.models.api import (
     CommandIn,
     LoginIn,
     OAuthExchangeIn,
+    ZoneConfigIn,
 )
 from app.services.camera_service import CameraUnavailable
 from app.services.command_service import CommandRejected
@@ -51,8 +52,13 @@ async def login(body: LoginIn, request: Request, response: Response) -> dict[str
     db = _services(request).db
     stored = await db.get_setting("console_password_hash")
     if stored is None:
-        # First run: this login initializes the console password. Safe
-        # because the server binds to localhost by default (README
+        # First run: this login initializes the console password. The
+        # length rule is enforced HERE, not just in the browser form —
+        # a scripted first request must not seed a 1-character password.
+        if len(body.password) < 8:
+            raise HTTPException(status_code=422,
+                                detail="Initial password must be at least 8 characters")
+        # Safe because the server binds to localhost by default (README
         # documents the LAN exposure pattern).
         await db.set_setting("console_password_hash", security.hash_password(body.password))
         _LOGGER.info("console password initialized (first login)")
@@ -90,12 +96,12 @@ async def get_map(request: Request) -> dict[str, Any]:
 
 @router.get("/history")
 async def get_history(request: Request, limit: int = 50) -> list[dict[str, Any]]:
-    return await _services(request).history_service.list_tasks(min(limit, 500))
+    return await _services(request).history_service.list_tasks(max(1, min(limit, 500)))
 
 
 @router.get("/audit")
 async def get_audit(request: Request, limit: int = 100) -> list[dict[str, Any]]:
-    return await _services(request).db.list_audit(min(limit, 500))
+    return await _services(request).db.list_audit(max(1, min(limit, 500)))
 
 
 @router.get("/camera/status")
@@ -159,19 +165,14 @@ async def _run(request: Request, fn) -> dict[str, Any]:
 # ── configuration ───────────────────────────────────────────────
 
 @router.put("/config/return-to-dock")
-async def set_rr(body: dict[str, Any], request: Request) -> dict[str, Any]:
+async def set_rr(body: ZoneConfigIn, request: Request) -> dict[str, Any]:
     cs = _services(request).command_service
-    payload = {
-        "enableRr": bool(body.get("enableRr", True)),
-        "rechargeBat": body.get("rechargeBat"),
-        "resumeBat": body.get("resumeBat"),
-    }
-    if payload["rechargeBat"] is not None and not (1 <= int(payload["rechargeBat"]) <= 100):
-        raise HTTPException(status_code=422, detail="rechargeBat must be 1..100")
-    if payload["resumeBat"] is not None and not (1 <= int(payload["resumeBat"]) <= 100):
-        raise HTTPException(status_code=422, detail="resumeBat must be 1..100")
     try:
-        return await cs.set_rr_config(**payload)
+        return await cs.set_rr_config(
+            enableRr=body.enable_rr,
+            rechargeBat=body.recharge_bat,
+            resumeBat=body.resume_bat,
+        )
     except CommandRejected as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

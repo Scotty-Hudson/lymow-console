@@ -56,12 +56,18 @@ class CommandRejected(Exception):
 
 
 def _audited(action: str):
-    """Audit refusals too: the log should show attempts, not just sends."""
+    """Audit refusals too: the log should show attempts, not just sends.
+
+    The command lock serializes check+publish so two concurrent requests
+    (two tabs) can't both pass the matrix gate and double-send a
+    non-idempotent command to the mower.
+    """
     def deco(fn):
         @functools.wraps(fn)
         async def wrapper(self, *args, **kwargs):
             try:
-                return await fn(self, *args, **kwargs)
+                async with self._cmd_lock:
+                    return await fn(self, *args, **kwargs)
             except CommandRejected as exc:
                 detail = {"zones": kwargs["zones"]} if kwargs.get("zones") else None
                 await self._audit(action, 0, detail, f"rejected:{exc}")
@@ -77,6 +83,7 @@ class CommandService:
         self.provider = provider
         self.state = state
         self.db = db
+        self._cmd_lock = asyncio.Lock()
 
     # ── public control surface ──────────────────────────────────
 
@@ -180,6 +187,8 @@ class CommandService:
     # ── internals ───────────────────────────────────────────────
 
     def _current_row(self) -> state_matrix.StateRow:
+        if self.state.state.get("robotInfo") is None:
+            return state_matrix.DEFAULT_ROW  # no telemetry yet — no buttons
         t = self.state.snapshot()["telemetry"]
         return state_matrix.lookup(
             work_status=t.get("work_status") or 0,

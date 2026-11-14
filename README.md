@@ -41,15 +41,15 @@ once — on Windows PowerShell `winget install astral-sh.uv`, on
 macOS/Linux `curl -LsSf https://astral.sh/uv/install.sh | sh` — then:
 
 ```bash
-uvx --from "git+https://github.com/OWNER/lymow-console#subdirectory=backend" lymow-console
+uvx --from "git+https://github.com/Scotty-Hudson/lymow-console#subdirectory=backend" lymow-console
 ```
 
 That's the whole install: uv fetches Python and every dependency
 (including a static ffmpeg for the camera), and the console opens at
 <http://127.0.0.1:8384>. It starts on the **simulator**; connect your
 real mower via the Settings page (Google sign-in + device discovery).
-Replace `OWNER` with the GitHub owner until this is on PyPI — then it
-is just `uvx lymow-console`.
+The repo is currently **private** — installers need GitHub access; once
+it is on PyPI the command is just `uvx lymow-console`.
 
 ## Quick start (Ubuntu 22.04/24.04)
 

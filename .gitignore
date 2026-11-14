@@ -25,3 +25,6 @@ research/
 .vscode/
 .idea/
 .DS_Store
+
+# setuptools build output
+build/

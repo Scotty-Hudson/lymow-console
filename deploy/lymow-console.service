@@ -1,7 +1,7 @@
 # systemd system unit for lymow-console (installed as root; the app
 # process itself runs as an unprivileged User=).
 # Install:  sudo cp deploy/lymow-console.service /etc/systemd/system/
-#           edit User= and the paths, then
+#           edit User=/Group= (paths follow that user's home via %h), then
 #   sudo systemctl daemon-reload && systemctl enable --now lymow-console
 #
 # The service binds 127.0.0.1 only; reach it from other machines with
@@ -14,13 +14,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=scotty
-Group=scotty
-WorkingDirectory=/home/scotty/repos/lymow-console/backend
-ExecStart=/home/scotty/repos/lymow-console/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8384 --timeout-graceful-shutdown 5
+# CHANGE ME: the unprivileged user to run as (paths below follow its
+# home automatically via the %h specifier — repo lives at ~mower/repos/lymow-console).
+User=mower
+Group=mower
+WorkingDirectory=%h/repos/lymow-console/backend
+ExecStart=%h/repos/lymow-console/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8384 --timeout-graceful-shutdown 5
 # sim = toy mower, never touches the real one; real = your actual mower.
 Environment=LYMOW_PROVIDER=real
-Environment=LYMOW_DATA_DIR=/home/scotty/.local/share/lymow-console
+Environment=LYMOW_DATA_DIR=%h/.local/share/lymow-console
 Restart=on-failure
 RestartSec=5
 
@@ -29,7 +31,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/scotty/.local/share/lymow-console
+ReadWritePaths=%h/.local/share/lymow-console
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true

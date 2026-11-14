@@ -392,3 +392,18 @@ class TestCamera:
         c = r.json()
         assert c["mode"] == "simulated"
         assert c["available"] is True and c["live"] is True
+
+
+class TestInstalledEntryProbe:
+    """run()'s boot-mode probe: simulator until cloud creds are on file."""
+
+    async def test_probe_flips_only_with_stored_credentials(self, settings):
+        from app.db import Database
+        from app.main import _cloud_configured
+
+        assert _cloud_configured(settings) is False  # no DB yet
+        db = Database(settings.db_path)
+        await db.open()
+        await db.set_setting("lymow_refresh_token", "dummtoken")
+        await db.close()
+        assert _cloud_configured(settings) is True

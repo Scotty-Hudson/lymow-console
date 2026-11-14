@@ -194,20 +194,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 app = create_app()
 
 
+def _cloud_configured(s: Settings) -> bool:
+    """True once the Settings page has stored Lymow cloud credentials
+    (Google refresh token or native password). Read-only sync probe used
+    by the installed entry point only, before the async DB is opened."""
+    if not s.db_path.exists():
+        return False
+    import sqlite3
+
+    try:
+        con = sqlite3.connect(f"file:{s.db_path}?mode=ro", uri=True)
+        try:
+            row = con.execute(
+                "SELECT 1 FROM settings WHERE key IN "
+                "('lymow_refresh_token','lymow_password') "
+                "AND value != '' LIMIT 1"
+            ).fetchone()
+        finally:
+            con.close()
+        return row is not None
+    except sqlite3.Error:
+        return False
+
+
 def run() -> None:
     """Console entry point installed by pip/uvx (command: lymow-console).
 
-    Starts on the safe simulator; the real mower is connected in the
-    browser's Settings page. systemd deploys use uvicorn directly.
+    Boots straight onto the real mower when the Settings page has already
+    stored cloud credentials; until then the safe simulator. An explicit
+    LYMOW_PROVIDER env var always wins. systemd deploys use uvicorn directly.
     """
+    import os
     import threading
     import webbrowser
 
     import uvicorn
 
     s = get_settings()
+    if s.provider == "sim" and os.environ.get("LYMOW_PROVIDER") is None \
+            and _cloud_configured(s):
+        _LOGGER.info("Lymow credentials on file -> starting against the "
+                     "real mower (set LYMOW_PROVIDER=sim to override)")
+        s.provider = "real"
     url = f"http://{s.host}:{s.port}"
-    print(f"lymow-console -> {url}  (simulator until you connect your mower)")
+    mode = "real mower" if s.provider == "real" else "simulator"
+    print(f"lymow-console -> {url}  ({mode})")
     threading.Timer(1.5, webbrowser.open, [url]).start()
     uvicorn.run(create_app(s), host=s.host, port=s.port)
 

@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app import security
+from app.lymow.const import API_ENDPOINTS
 from app.models.api import (
     CloudSettingsIn,
     CommandIn,
@@ -188,6 +189,10 @@ async def put_cloud_settings(body: CloudSettingsIn, request: Request) -> dict[st
     await db.set_setting("lymow_password", body.lymow_password)
     if body.device_thing_name:
         await db.set_setting("device_thing_name", body.device_thing_name)
+    if body.region:
+        if body.region not in API_ENDPOINTS:
+            raise HTTPException(status_code=422, detail=f"unknown region: {body.region}")
+        await db.set_setting("lymow_region", body.region)
     _LOGGER.info("cloud credentials updated (value not logged)")
     return {"ok": True}
 
@@ -195,9 +200,46 @@ async def put_cloud_settings(body: CloudSettingsIn, request: Request) -> dict[st
 @router.delete("/settings/cloud")
 async def delete_cloud_settings(request: Request) -> dict[str, Any]:
     db = _services(request).db
-    for key in ("lymow_username", "lymow_password", "device_thing_name"):
+    for key in ("lymow_username", "lymow_password", "device_thing_name",
+                "lymow_region"):
         await db.delete_setting(key)
     return {"ok": True}
+
+
+@router.get("/discovery/devices")
+async def discovery_devices(request: Request, region: str | None = None) -> list[dict]:
+    """Log in with the STORED credentials (transient session, closed right
+    after) and list the account's mower thing names. Read-only: touches
+    the REST device list only — the mower itself is never commanded."""
+    db = _services(request).db
+    email = await db.get_setting("lymow_username")
+    password = await db.get_setting("lymow_password")
+    if not email or not password:
+        raise HTTPException(status_code=409,
+                            detail="no Lymow credentials configured yet")
+    region = region or await db.get_setting("lymow_region") \
+        or request.app.state.settings.region
+    if region not in API_ENDPOINTS:
+        raise HTTPException(status_code=422, detail=f"unknown region: {region}")
+
+    from app.services.real_provider import RealMowerProvider
+
+    probe = RealMowerProvider(region=region, device_id="", email=email,
+                              password=password)
+    try:
+        await probe._ensure_session()  # noqa: SLF001 — deliberate internal reuse
+        await probe._login()
+        return await probe.list_devices()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _LOGGER.warning("device discovery failed: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="login/discovery failed (check credentials and region)",
+        ) from exc
+    finally:
+        await probe.stop()
 
 
 # ── camera stream (multipart MJPEG/PNG) ─────────────────────────

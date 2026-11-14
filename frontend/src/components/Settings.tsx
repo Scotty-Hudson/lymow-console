@@ -14,6 +14,10 @@ export default function Settings({ onProbe }: { onProbe: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [thingName, setThingName] = useState("");
+  const [region, setRegion] = useState("eu-west-1");
+  const [devices, setDevices] = useState<
+    { deviceThingName: string; deviceName: string; deviceState: string | null }[]
+  >([]);
   const [haveCloud, setHaveCloud] = useState(false);
 
   const load = () =>
@@ -24,6 +28,7 @@ export default function Settings({ onProbe }: { onProbe: () => void }) {
         setHaveCloud(Boolean(s.lymow_username));
         setThingName(String(s.device_thing_name ?? ""));
         setUsername(String(s.lymow_username ?? ""));
+        if (s.lymow_region) setRegion(String(s.lymow_region));
       })
       .catch(() => undefined);
   useEffect(() => {
@@ -49,11 +54,28 @@ export default function Settings({ onProbe }: { onProbe: () => void }) {
         lymow_username: username,
         lymow_password: password,
         device_thing_name: thingName || null,
+        region,
       });
       setNote("Cloud credentials saved server-side (never sent to the browser again).");
       setPassword("");
       load();
     } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  async function discover() {
+    setNote("Logging in to Lymow cloud (read-only device list)…");
+    try {
+      const devs = await api.discovery(region);
+      setDevices(devs);
+      setNote(
+        devs.length === 0
+          ? "No devices found on this account/region."
+          : `Found ${devs.length} device(s) — click one to pin it, then Save.`,
+      );
+    } catch (e) {
+      setDevices([]);
       setNote((e as Error).message);
     }
   }
@@ -131,7 +153,16 @@ export default function Settings({ onProbe }: { onProbe: () => void }) {
             </span>
           </div>
           <div className="field">
-            <label>Device thing name (optional)</label>
+            <label>Cloud region</label>
+            <select value={region} onChange={(e) => setRegion(e.target.value)}>
+              <option value="eu-west-1">eu-west-1 (Europe)</option>
+              <option value="us-east-2">us-east-2 (US)</option>
+              <option value="ap-southeast-2">ap-southeast-2 (AU/NZ)</option>
+              <option value="ap-east-1">ap-east-1 (Asia-Pacific)</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Device thing name (optional — or Discover)</label>
             <input
               type="text"
               value={thingName}
@@ -139,9 +170,12 @@ export default function Settings({ onProbe }: { onProbe: () => void }) {
               placeholder="e.g. LYMOW-ONE-PLUS-…"
             />
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button className="primary" type="submit">
               Save credentials
+            </button>
+            <button type="button" onClick={discover}>
+              Discover devices
             </button>
             <button
               className="danger"
@@ -149,6 +183,7 @@ export default function Settings({ onProbe }: { onProbe: () => void }) {
               onClick={() =>
                 api.deleteCloudSettings().then(() => {
                   setHaveCloud(false);
+                  setDevices([]);
                   setUsername("");
                   load();
                 })
@@ -157,6 +192,25 @@ export default function Settings({ onProbe }: { onProbe: () => void }) {
               Remove
             </button>
           </div>
+          {devices.length > 0 && (
+            <div className="zone-pick">
+              {devices.map((d) => (
+                <label
+                  key={d.deviceThingName}
+                  className={thingName === d.deviceThingName ? "sel" : ""}
+                >
+                  <input
+                    type="radio"
+                    name="thing"
+                    style={{ width: 14 }}
+                    checked={thingName === d.deviceThingName}
+                    onChange={() => setThingName(d.deviceThingName)}
+                  />
+                  {d.deviceName} ({d.deviceState ?? "state?"})
+                </label>
+              ))}
+            </div>
+          )}
         </form>
       </fieldset>
 

@@ -66,11 +66,15 @@ class RealMowerProvider(MowerProvider):
 
     # ── Lifecycle ───────────────────────────────────────────────
 
+    async def _ensure_session(self) -> None:
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+            self.auth = CognitoAuth(self.region, self._session)
+            self.rest = LymowREST(self.region, self.auth, self._session)
+
     async def start(self) -> None:
         self._shutting_down = False
-        self._session = aiohttp.ClientSession()
-        self.auth = CognitoAuth(self.region, self._session)
-        self.rest = LymowREST(self.region, self.auth, self._session)
+        await self._ensure_session()
 
         await self._login()
 

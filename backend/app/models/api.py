@@ -79,3 +79,4 @@ class CloudSettingsIn(BaseModel):
     lymow_username: str = Field(min_length=1)
     lymow_password: str = Field(min_length=1)
     device_thing_name: str | None = None
+    region: str | None = None  # eu-west-1 | us-east-2 | ap-southeast-2 | ap-east-1

@@ -18,6 +18,7 @@ from app.api.routes import auth_router, router
 from app.api.ws import ws_router
 from app.config import Settings, get_settings
 from app.db import Database
+from app.lymow.const import API_ENDPOINTS
 from app.security import SessionSigner
 from app.services.camera_service import CameraService
 from app.services.command_service import CommandService
@@ -74,12 +75,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             provider.email = email
             provider.password = password
-            provider.device_id = device or provider.device_id
-            if not email or not password or not device:
+            region = await db.get_setting("lymow_region") or provider.region
+            if region not in API_ENDPOINTS:
+                _LOGGER.error("stored region %r unknown — falling back to %s",
+                              region, provider.region)
+                region = provider.region
+            provider.region = region
+            provider.host = API_ENDPOINTS[provider.region]["iotDomain"]
+            if not email or not password:
                 _LOGGER.error(
-                    "provider=real but credentials/device are not configured "
+                    "provider=real but credentials are not configured "
                     "— configure them in Settings; the console stays offline"
                 )
+            elif not device:
+                # No pinned device: auto-pick when the account has exactly
+                # one mower; ambiguous accounts must pin one in Settings.
+                try:
+                    await provider._ensure_session()  # noqa: SLF001
+                    await provider._login()  # noqa: SLF001
+                    devices = await provider.list_devices()
+                    if len(devices) == 1:
+                        device = devices[0]["deviceThingName"]
+                        await db.set_setting("device_thing_name", device)
+                        _LOGGER.info("auto-selected sole account device %s", device)
+                    else:
+                        _LOGGER.error(
+                            "provider=real but no device pinned and account has "
+                            "%d devices — pick one in Settings; staying offline",
+                            len(devices),
+                        )
+                except Exception:
+                    _LOGGER.exception(
+                        "device discovery failed — configure credentials/"
+                        "region in Settings; the console stays offline"
+                    )
+            provider.device_id = device or provider.device_id
 
         state_service = MowerStateService(provider)
         state_service.attach()
@@ -101,10 +131,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.history_service = history_service
         app.state.camera_service = camera_service
 
-        try:
-            await provider.start()
-        except Exception:
-            _LOGGER.exception("provider start failed; console stays offline")
+        if provider.simulator is False and not provider.device_id:
+            _LOGGER.error(
+                "real provider has no device thing name — NOT connecting "
+                "(configure credentials + device in Settings, then restart)"
+            )
+        else:
+            try:
+                await provider.start()
+            except Exception:
+                _LOGGER.exception("provider start failed; console stays offline")
 
         _LOGGER.info(
             "lymow-console ready (provider=%s, bind=%s:%s)",

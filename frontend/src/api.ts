@@ -40,6 +40,10 @@ export const api = {
   putCloudSettings: (body: unknown) =>
     request("/api/settings/cloud", { method: "PUT", body: JSON.stringify(body) }),
   deleteCloudSettings: () => request("/api/settings/cloud", { method: "DELETE" }),
+  discovery: (region?: string) =>
+    request<{ deviceThingName: string; deviceName: string; deviceState: string | null }[]>(
+      `/api/discovery/devices${region ? `?region=${encodeURIComponent(region)}` : ""}`,
+    ),
 };
 
 /** Live telemetry via WebSocket; reconnects with backoff. */

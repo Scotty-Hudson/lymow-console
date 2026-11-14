@@ -73,6 +73,22 @@ class TestAuth:
                 "/api/commands/pause", json={}
             ).status_code == 401
 
+    def test_real_provider_unconfigured_never_connects(self, tmp_path):
+        """provider=real with no credentials/device: the app must boot and
+        stay offline — no connection attempt, no crash."""
+        s = Settings(provider="real", data_dir=tmp_path,
+                     session_secret="k", _env_file=None)
+        app = create_app(s)
+        with TestClient(app) as client:
+            client.post("/api/auth/login", json={"password": "pw"})
+            snap = client.get("/api/state").json()
+            assert snap["simulator"] is False
+            assert snap["online"] is False
+            assert snap["telemetry"].get("battery") is None
+            # control commands refuse cleanly (transport not connected)
+            r = client.post("/api/commands/pause", json={})
+            assert r.status_code == 409  # matrix: unknown state, no buttons
+
 
 class TestStateAndMap:
     async def test_state_snapshot_shape(self, api):
@@ -175,6 +191,61 @@ class TestSettings:
         assert "console_password_hash" not in s
         r = await api.delete("/api/settings/cloud")
         assert r.status_code == 200
+
+    async def test_region_validated_and_persisted(self, api):
+        r = await api.put("/api/settings/cloud", json={
+            "lymow_username": "u@e.com", "lymow_password": "x",
+            "region": "moon-base-1",
+        })
+        assert r.status_code == 422
+        r = await api.put("/api/settings/cloud", json={
+            "lymow_username": "u@e.com", "lymow_password": "x",
+            "region": "us-east-2",
+        })
+        assert r.status_code == 200
+        s = (await api.get("/api/settings")).json()
+        assert s["lymow_region"] == "us-east-2"
+
+    async def test_discovery_requires_stored_credentials(self, api):
+        r = await api.get("/api/discovery/devices")
+        assert r.status_code == 409  # nothing configured yet
+
+    async def test_discovery_roundtrip_with_stubbed_provider(self, api, monkeypatch):
+        """No real cloud contact in tests: stub login + device list."""
+        from app.services.real_provider import RealMowerProvider
+
+        async def fake_login(self):
+            pass
+
+        async def fake_list(self):
+            return [{"deviceThingName": "thing-7", "deviceName": "One Plus",
+                     "deviceState": "online"}]
+
+        monkeypatch.setattr(RealMowerProvider, "_login", fake_login)
+        monkeypatch.setattr(RealMowerProvider, "list_devices", fake_list)
+        await api.put("/api/settings/cloud", json={
+            "lymow_username": "u@e.com", "lymow_password": "x",
+            "region": "eu-west-1",
+        })
+        r = await api.get("/api/discovery/devices")
+        assert r.status_code == 200
+        assert r.json()[0]["deviceThingName"] == "thing-7"
+
+    async def test_discovery_degrades_on_login_failure(self, api, monkeypatch):
+        from app.services.real_provider import RealMowerProvider
+        from app.lymow.auth import LymowAuthError
+
+        async def bad_login(self):
+            raise LymowAuthError("bad credentials")
+
+        monkeypatch.setattr(RealMowerProvider, "_login", bad_login)
+        await api.put("/api/settings/cloud", json={
+            "lymow_username": "u@e.com", "lymow_password": "x",
+            "region": "eu-west-1",
+        })
+        r = await api.get("/api/discovery/devices")
+        assert r.status_code == 502
+        assert "super" not in r.text  # no credential echo in errors
 
 
 class TestWebSocket:

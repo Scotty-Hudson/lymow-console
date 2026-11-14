@@ -1,6 +1,7 @@
 """Camera service: simulated frame renderer + availability posture."""
 from __future__ import annotations
 
+import asyncio
 import shutil
 import struct
 import sys
@@ -110,6 +111,52 @@ class TestSimFrames:
         state = MowerStateService(QuietProvider())
         cam = CameraService(state.provider, state)
         assert cam._rtsp_url() == "rtsp://192.168.10.99:10022/h264ESVideoTest"
+
+
+class TestRelayLifecycle:
+    """Frame splitting and subprocess lifecycle for the RTSP relay."""
+
+    class FakeProc:
+        def __init__(self, chunks: list[bytes]):
+            self._chunks = list(chunks)
+            self.terminated = False
+
+        def read(self, _n: int) -> bytes:
+            return self._chunks.pop(0) if self._chunks else b""
+
+        @property
+        def stdout(self):
+            return self
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout=None) -> int:
+            return 0
+
+    async def test_read_frames_splits_jpegs_across_chunk_boundaries(self, sim_state):
+        mower, state = sim_state
+        cam = CameraService(mower, state)
+        proc = self.FakeProc([b"\xff\xd8BB", b"B\xff\xd9", b"\xff\xd8A\xff\xd9", b""])
+        cam._proc = proc  # noqa: SLF001
+        frames = [f async for f in cam._read_frames(  # noqa: SLF001
+            asyncio.get_running_loop(), b"")]
+        assert frames == [b"\xff\xd8BBB\xff\xd9", b"\xff\xd8A\xff\xd9"]
+        assert proc.terminated, "EOF must kill the ffmpeg process"
+
+    async def test_viewer_disconnect_kills_ffmpeg(self, sim_state):
+        """A closed browser tab must free the mower's single RTSP slot —
+        a stale relay holding it would freeze every future viewing."""
+        mower, state = sim_state
+        cam = CameraService(mower, state)
+        proc = self.FakeProc([b"\xff\xd8A\xff\xd9"])
+        cam._proc = proc  # noqa: SLF001
+        gen = cam._relay_stream()  # noqa: SLF001
+        assert await gen.__anext__() == b"\xff\xd8A\xff\xd9"
+        await gen.aclose()  # the browser goes away
+        assert proc.terminated
+        assert cam._proc is None
+        assert cam._relay_active is False
 
 
 class TestFfmpegDiscovery:

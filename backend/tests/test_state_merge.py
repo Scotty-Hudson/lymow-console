@@ -5,7 +5,9 @@ import pytest
 
 from app.lymow import lymow_extracted_pb2 as pb
 from app.lymow import telemetry as ltelemetry
+from app.lymow.const import WORK_STATUS_ERROR, WORK_STATUS_WAITING
 from app.lymow.state import merge_pboutput
+from app.services.provider import MowerProvider
 
 
 def _msg() -> pb.PbOutput:
@@ -103,30 +105,33 @@ class TestTelemetryDerivation:
         assert t["num_satellites"] == 10
 
 
+class StubProvider(MowerProvider):
+    """Provider stub exposing the refire hook, shared state dict and the
+    REST firmware fallback — the MowerStateService <-> provider contract."""
+
+    def __init__(self):
+        super().__init__("stub")
+        self.refires: list[bool] = []
+        self._state_ref: dict = {}
+        self.rest_firmware_version = "v9.9.9"
+
+    async def start(self): pass
+    async def stop(self): pass
+    def is_connected(self): return True
+    async def publish_pbinput(self, raw): pass
+
+    def maybe_refire_query_map(self, cleanreport_arrived=False):
+        self.refires.append(cleanreport_arrived)
+
+
 class TestStateServiceWiring:
     """MowerStateService <-> provider contracts: refire hook, shared state
     dict, REST firmware fallback, and the empty-telemetry button gate."""
 
     async def test_provider_wiring_refire_fw_and_unknown_gate(self):
-        from app.services.provider import MowerProvider
         from app.services.state_service import MowerStateService
 
-        class WatchingProvider(MowerProvider):
-            def __init__(self):
-                super().__init__("stub")
-                self.refires: list[bool] = []
-                self._state_ref: dict = {}
-                self.rest_firmware_version = "v9.9.9"
-
-            async def start(self): pass
-            async def stop(self): pass
-            def is_connected(self): return True
-            async def publish_pbinput(self, raw): pass
-
-            def maybe_refire_query_map(self, cleanreport_arrived=False):
-                self.refires.append(cleanreport_arrived)
-
-        p = WatchingProvider()
+        p = StubProvider()
         st = MowerStateService(p)
         st.attach()
         assert p._state_ref is st.state, "refire rule must read the live state dict"
@@ -145,3 +150,25 @@ class TestStateServiceWiring:
         assert snap2["telemetry"]["fw_version"] == "v9.9.9", "REST fw fallback"
         assert snap2["allowed_actions"]["start_mowing"] is None  # mowing: no Start
         assert snap2["allowed_actions"]["pause"] is not None
+
+    async def test_error_codes_cleared_on_status_recovery(self):
+        """error_cleared recipe: robotStatus 7 -> non-7 wipes stale codes.
+
+        The firmware does not reliably send an empty errorCodes list when
+        it recovers, so without this the dashboard pins a phantom error
+        forever.
+        """
+        from app.services.state_service import MowerStateService
+
+        st = MowerStateService(StubProvider())
+        st.attach()
+        m1 = _msg()
+        m1.robotInfo.robotStatus = WORK_STATUS_ERROR
+        m1.errorCodes.extend([21])
+        st._merge(m1)
+        assert st.state["errorCodes"] == [21]
+
+        m2 = _msg()
+        m2.robotInfo.robotStatus = WORK_STATUS_WAITING  # recovered, no errorCodes field
+        st._merge(m2)
+        assert st.state["errorCodes"] == []

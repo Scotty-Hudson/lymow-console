@@ -23,6 +23,7 @@ from app.security import SessionSigner
 from app.services.camera_service import CameraService
 from app.services.command_service import CommandService
 from app.services.history_service import HistoryService
+from app.services.provider import spawn
 from app.services.map_service import MapService
 from app.services.state_service import MowerStateService
 from app.services.telemetry_service import TelemetryHub
@@ -82,7 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             def _persist_refresh_token(token: str, _db=db) -> None:
                 # CognitoAuth may rotate the refresh token inside async
                 # tasks; schedule the DB write on the running loop.
-                asyncio.get_running_loop().create_task(
+                spawn(
                     _db.set_setting("lymow_refresh_token", token)
                 )
 

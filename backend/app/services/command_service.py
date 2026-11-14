@@ -162,11 +162,14 @@ class CommandService:
         reset to firmware defaults."""
         cached = self.state.state.get("robotConfig")
         rr = getattr(cached, "rrConfig", None) if cached is not None else None
+        # "or" not .get-default: the route passes explicit None for
+        # omitted fields, so the key exists and .get's default never fires.
         payload = encode_set_rr_config(
             enable_rr=fields.get("enableRr", bool(getattr(rr, "enableRr", True))),
-            recharge_bat=int(fields.get("rechargeBat",
-                                        getattr(rr, "rechargeBat", 30))),
-            resume_bat=int(fields.get("resumeBat", getattr(rr, "resumeBat", 80))),
+            recharge_bat=int(fields.get("rechargeBat")
+                             or getattr(rr, "rechargeBat", 30)),
+            resume_bat=int(fields.get("resumeBat")
+                           or getattr(rr, "resumeBat", 80)),
             period_start_hour=fields.get("periodStartHour"),
             period_start_minute=fields.get("periodStartMinute"),
             period_end_hour=fields.get("periodEndHour"),

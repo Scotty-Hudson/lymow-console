@@ -176,6 +176,7 @@ class CameraService:
             except Exception:
                 try:
                     self._proc.kill()
+                    self._proc.wait(timeout=3)  # SIGKILL is immediate; reap the zombie
                 except Exception:
                     pass
             self._proc = None
@@ -190,6 +191,7 @@ class CameraService:
                 yield frame
         finally:
             self._relay_active = False
+            self._kill_proc()  # last viewer gone: free the mower's RTSP slot
 
     async def _read_frames(self, loop, buf: bytes) -> AsyncIterator[bytes]:
         while not self._stopping:

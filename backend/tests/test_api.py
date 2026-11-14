@@ -181,6 +181,12 @@ class TestCommands:
         })
         assert r.status_code == 422
 
+    async def test_rr_config_omitted_fields_carry_forward(self, api):
+        # Regression: omitted fields arrive as explicit None — must use
+        # the cached/default values, not crash with int(None) -> 500.
+        r = await api.put("/api/config/return-to-dock", json={"enableRr": True})
+        assert r.status_code == 200
+
     async def test_query_map_and_schedules(self, api):
         r = await api.post("/api/commands/query-map")
         assert r.status_code == 200

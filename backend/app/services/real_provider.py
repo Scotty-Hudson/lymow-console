@@ -25,7 +25,7 @@ from app.lymow.const import (
 )
 from app.lymow.mqtt_client import MqttClient
 from app.lymow.rest import LymowREST
-from app.services.provider import MowerProvider, PublishError
+from app.services.provider import MowerProvider, PublishError, spawn
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -234,7 +234,7 @@ class RealMowerProvider(MowerProvider):
             return
         _LOGGER.warning("MQTT disconnected for %s — refreshing and reconnecting", self.device_id)
         self.on_connection_changed(False)
-        asyncio.get_running_loop().create_task(self._reconnect_with_fresh_creds())
+        spawn(self._reconnect_with_fresh_creds())
 
     async def _reconnect_with_fresh_creds(self) -> None:
         if self._shutting_down or self._reconnecting:
@@ -299,7 +299,7 @@ class RealMowerProvider(MowerProvider):
         else:
             self._catalog_retry_count += 1
         self._last_catalog_query_at = now
-        asyncio.get_running_loop().create_task(
+        spawn(
             self._publish_userctrl(USER_CTRL_QUERY_MAP, with_query_map_flag=True)
         )
 

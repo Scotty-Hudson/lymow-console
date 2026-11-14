@@ -1,12 +1,12 @@
 """HistoryService — persists completed/cancelled mow tasks to SQLite."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Any
 
 from app.db import Database
+from app.services.provider import spawn
 from app.services.state_service import MowerStateService
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class HistoryService:
             duration = report.get("duration_s")
             ended = (started + duration) if duration is not None else None
             zones = [z["name"] for z in self.state.snapshot()["task_zones"]]
-            asyncio.get_running_loop().create_task(self.db.record_task(
+            spawn(self.db.record_task(
                 started_at=float(started),
                 ended_at=float(ended) if ended is not None else None,
                 end_type=report.get("end_type"),

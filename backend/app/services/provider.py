@@ -7,8 +7,20 @@ Two implementations:
 from __future__ import annotations
 
 import abc
-from collections.abc import Callable
+import asyncio
+from collections.abc import Callable, Coroutine
 from typing import Any
+
+
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def spawn(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+    """create_task that keeps a strong reference (bare tasks can be GC'd)."""
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
 
 
 class ProviderError(Exception):

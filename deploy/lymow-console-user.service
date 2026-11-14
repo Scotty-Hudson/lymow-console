@@ -1,0 +1,22 @@
+# lymow-console as a *user* service (no sudo). Enable + start:
+#   systemctl --user enable --now lymow-console
+# Start at boot even when logged out:
+#   loginctl enable-linger scotty
+# Logs: journalctl --user -u lymow-console -f
+
+[Unit]
+Description=lymow-console (Lymow robotic mower web console)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/scotty/repos/lymow-console/backend
+ExecStart=/home/scotty/repos/lymow-console/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8384 --timeout-graceful-shutdown 5
+Environment=LYMOW_PROVIDER=real
+Environment=LYMOW_DATA_DIR=/home/scotty/.local/share/lymow-console
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -78,8 +78,13 @@ Configuration lives in environment variables — see `.env.example`.
 
 ### systemd
 
-`deploy/lymow-console.service` (rootless, hardened, localhost-bound).
-Adjust `User=` and paths, then:
+Two units in `deploy/`:
+
+- **`lymow-console-user.service`** — a *user* service, no sudo needed:
+  copy to `~/.config/systemd/user/`, then
+  `systemctl --user daemon-reload && systemctl --user enable --now lymow-console`
+  and `loginctl enable-linger <you>` to start it at boot without login.
+- **`lymow-console.service`** — the hardened system-wide unit:
 
 ```bash
 sudo cp deploy/lymow-console.service /etc/systemd/system/

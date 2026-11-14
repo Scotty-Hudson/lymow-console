@@ -51,10 +51,22 @@ LYMOW_PROVIDER=real .venv/bin/python -m uvicorn app.main:app \
     --host 127.0.0.1 --port 8384
 ```
 
-Then open http://127.0.0.1:8384 and enter your Lymow account credentials
-under **Settings** (they are stored server-side only, masked in every
-API response, and never logged). Start with `LYMOW_PROVIDER=sim` until
-you choose to talk to the real mower.
+Then open http://127.0.0.1:8384 and enter your Lymow account details
+under **Settings** (stored server-side only, masked in every API
+response, never logged):
+
+- **Email + password** accounts: pick *Email + password*, enter them,
+  pick your account region.
+- **Google accounts** (how most Android users sign in — there is no
+  password): pick *Sign in with Google* → *Open Google sign-in page* →
+  sign in with Google in the popup → the browser then **fails to open
+  the Lymow app** (expected: the callback URL is `myapp://…`) → copy
+  that full failed URL from the address bar, paste it into the box, and
+  click *Complete sign-in & find my mower*. A refresh token is stored
+  server-side and renews automatically from then on.
+
+Start with `LYMOW_PROVIDER=sim` until you choose to talk to the real
+mower.
 
 Configuration lives in environment variables — see `.env.example`.
 

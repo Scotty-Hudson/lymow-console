@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -44,11 +45,17 @@ class RealMowerProvider(MowerProvider):
         device_id: str,
         email: str | None = None,
         password: str | None = None,
+        auth_method: str = "password",   # "password" (SRP) | "oauth" (Google)
+        refresh_token: str | None = None,
     ) -> None:
         super().__init__(device_id)
         self.region = region
         self.email = email
         self.password = password
+        self.auth_method = auth_method
+        self.refresh_token = refresh_token
+        # Persist rotated refresh tokens (durable Google credential).
+        self.on_refresh_token: Callable[[str], None] = lambda token: None
         self.host = API_ENDPOINTS[region]["iotDomain"]
         self._session: aiohttp.ClientSession | None = None
         self.auth: CognitoAuth | None = None
@@ -70,12 +77,38 @@ class RealMowerProvider(MowerProvider):
         if self._session is None:
             self._session = aiohttp.ClientSession()
             self.auth = CognitoAuth(self.region, self._session)
+            assert self.auth is not None
+            self.auth.on_token_rotated = self._handle_token_rotation
             self.rest = LymowREST(self.region, self.auth, self._session)
+
+    def _handle_token_rotation(self, token: str) -> None:
+        self.refresh_token = token
+        try:
+            self.on_refresh_token(token)
+        except Exception:
+            _LOGGER.exception("refresh-token persist callback failed")
+
+    async def _login(self) -> None:
+        assert self.auth is not None
+        if self.auth_method == "oauth":
+            # Federated (Google/Apple) account: the persisted refresh
+            # token is the credential; there is no Cognito password.
+            if not self.refresh_token:
+                raise LymowAuthError(
+                    "No Google sign-in token — complete Settings → "
+                    "Sign in with Google first"
+                )
+            self.auth.restore_refresh_token(self.refresh_token)
+            await self.auth.refresh_tokens()
+        elif self.email and self.password:
+            await self.auth.login_srp(self.email, self.password)
+        else:
+            raise LymowAuthError("No Lymow credentials configured")
+        await self.auth.get_aws_credentials()
 
     async def start(self) -> None:
         self._shutting_down = False
         await self._ensure_session()
-
         await self._login()
 
         # Initial REST poll (online flag + camera IP before MQTT lands).
@@ -100,14 +133,6 @@ class RealMowerProvider(MowerProvider):
         self._last_catalog_query_at = datetime.now(UTC)
 
         self._rest_poll_task = asyncio.create_task(self._rest_poll_loop())
-
-    async def _login(self) -> None:
-        assert self.auth is not None
-        if self.email and self.password:
-            await self.auth.login_srp(self.email, self.password)
-        else:
-            raise LymowAuthError("No Lymow credentials configured")
-        await self.auth.get_aws_credentials()
 
     async def stop(self) -> None:
         self._shutting_down = True

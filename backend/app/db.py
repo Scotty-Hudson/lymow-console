@@ -46,7 +46,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON command_audit(ts DESC);
 """
 
 # Settings keys we treat as secret when serializing for logs/API.
-SECRET_SETTING_KEYS = {"lymow_password", "session_secret_override"}
+SECRET_SETTING_KEYS = {"lymow_password", "lymow_refresh_token",
+                       "session_secret_override"}
 
 
 class Database:

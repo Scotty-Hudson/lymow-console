@@ -16,6 +16,8 @@ import asyncio
 import base64
 import json
 import logging
+import urllib.parse
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import aiohttp
@@ -29,6 +31,48 @@ except ImportError:
 from .const import COGNITO_CONFIG
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# ── Federated (Google/Apple) sign-in helpers ─────────────────────
+# Ported from Lymow-One-MQTT's config_flow.py (same MIT license).
+
+OAUTH_REDIRECT_URI = "myapp://callback/"  # only redirect Cognito accepts
+
+
+def build_oauth_url(region: str) -> str:
+    """Cognito hosted-UI link for federated login.
+
+    The federated client only accepts myapp://callback/ as redirect_uri
+    (verified empirically upstream); signing in there fails the final
+    redirect, and the user copies the code from that failed URL.
+    """
+    cfg = COGNITO_CONFIG[region]
+    qs = urllib.parse.urlencode({
+        "client_id": cfg["client_id"],
+        "response_type": "code",
+        "scope": "openid aws.cognito.signin.user.admin",
+        "redirect_uri": OAUTH_REDIRECT_URI,
+    })
+    return f"https://{cfg['hosted_ui_domain']}/login?{qs}"
+
+
+def extract_oauth_code(pasted: str) -> str | None:
+    """Extract the auth code from a full myapp://callback URL or a bare code."""
+    pasted = pasted.strip()
+    if pasted.startswith("myapp://"):
+        try:
+            parsed = urllib.parse.urlparse(pasted)
+            qs = urllib.parse.parse_qs(parsed.query)
+            return qs.get("code", [None])[0]
+        except Exception:
+            return None
+    if "code=" in pasted:
+        try:
+            qs = urllib.parse.parse_qs(pasted.split("?", 1)[1] if "?" in pasted else pasted)
+            return qs.get("code", [None])[0]
+        except Exception:
+            return None
+    return pasted if pasted else None
 
 
 class LymowAuthError(Exception):
@@ -81,6 +125,11 @@ class CognitoAuth:
 
         # For federated reauth detection: did we use OAuth?
         self._is_federated: bool = False
+
+        # Called whenever the refresh token changes (initial exchange or
+        # rotation on refresh) so the console can persist it. The refresh
+        # token is the durable credential for federated (Google) accounts.
+        self.on_token_rotated: Callable[[str], None] = lambda token: None
 
     # ── Native SRP login ───────────────────────────────────────
 
@@ -142,6 +191,19 @@ class CognitoAuth:
         self.access_token = body["access_token"]
         self.refresh_token = body.get("refresh_token") or self.refresh_token
         self._is_federated = True
+        if self.refresh_token:
+            self.on_token_rotated(self.refresh_token)
+
+    def restore_refresh_token(self, token: str) -> None:
+        """Re-arm a previously persisted federated session (Google/Apple).
+
+        The refresh token is the durable credential for federated accounts;
+        set it and refresh_tokens() re-establishes the token pair.
+        """
+        if not token:
+            raise LymowAuthError("empty refresh token")
+        self.refresh_token = token
+        self._is_federated = True
 
     # ── Token refresh ───────────────────────────────────────────
 
@@ -178,6 +240,7 @@ class CognitoAuth:
         # Cognito generally doesn't rotate refresh_token on refresh
         if "refresh_token" in body:
             self.refresh_token = body["refresh_token"]
+            self.on_token_rotated(self.refresh_token)
 
     # ── Identity Pool → AWS credentials ─────────────────────────
 

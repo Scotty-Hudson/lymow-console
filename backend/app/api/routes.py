@@ -12,14 +12,17 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app import security
+from app.lymow.auth import build_oauth_url, extract_oauth_code
 from app.lymow.const import API_ENDPOINTS
 from app.models.api import (
     CloudSettingsIn,
     CommandIn,
     LoginIn,
+    OAuthExchangeIn,
 )
 from app.services.camera_service import CameraUnavailable
 from app.services.command_service import CommandRejected
+from app.services.real_provider import RealMowerProvider
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -185,15 +188,33 @@ async def get_settings(request: Request) -> dict[str, Any]:
 @router.put("/settings/cloud")
 async def put_cloud_settings(body: CloudSettingsIn, request: Request) -> dict[str, Any]:
     db = _services(request).db
-    await db.set_setting("lymow_username", body.lymow_username)
-    await db.set_setting("lymow_password", body.lymow_password)
+    method = body.auth_method or "password"
+    if method not in ("password", "google"):
+        raise HTTPException(status_code=422,
+                            detail="auth_method must be 'password' or 'google'")
+    if method == "password":
+        haveStored = (
+            await db.get_setting("lymow_username")
+            and await db.get_setting("lymow_password")
+        )
+        if not haveStored and not (body.lymow_username and body.lymow_password):
+            raise HTTPException(
+                status_code=422,
+                detail="email + password required for password auth "
+                       "(use Sign in with Google for a Google account)",
+            )
+    await db.set_setting("lymow_auth_method", method)
+    if body.lymow_username:
+        await db.set_setting("lymow_username", body.lymow_username)
+    if body.lymow_password:
+        await db.set_setting("lymow_password", body.lymow_password)
     if body.device_thing_name:
         await db.set_setting("device_thing_name", body.device_thing_name)
     if body.region:
         if body.region not in API_ENDPOINTS:
             raise HTTPException(status_code=422, detail=f"unknown region: {body.region}")
         await db.set_setting("lymow_region", body.region)
-    _LOGGER.info("cloud credentials updated (value not logged)")
+    _LOGGER.info("cloud settings updated (method=%s, values not logged)", method)
     return {"ok": True}
 
 
@@ -201,9 +222,74 @@ async def put_cloud_settings(body: CloudSettingsIn, request: Request) -> dict[st
 async def delete_cloud_settings(request: Request) -> dict[str, Any]:
     db = _services(request).db
     for key in ("lymow_username", "lymow_password", "device_thing_name",
-                "lymow_region"):
+                "lymow_region", "lymow_auth_method", "lymow_refresh_token"):
         await db.delete_setting(key)
     return {"ok": True}
+
+
+@router.get("/settings/oauth-url")
+async def oauth_start_url(request: Request, region: str | None = None) -> dict[str, Any]:
+    """Cognito hosted-UI link for 'Sign in with Google'. The final
+    myapp://callback redirect deliberately fails in the browser — the
+    user copies that URL and pastes it into oauth-exchange."""
+    region = await _resolve_region(request, region)
+    return {"url": build_oauth_url(region), "region": region,
+            "redirect_hint": "After Google sign-in the browser fails to open "
+                             "myapp://callback/... — copy that full URL."}
+
+
+@router.post("/settings/oauth-exchange")
+async def oauth_exchange(body: OAuthExchangeIn, request: Request) -> dict[str, Any]:
+    """Complete the federated Google flow: extract the auth code from the
+    pasted callback URL, exchange it for Cognito tokens, persist the
+    refresh token (masked secret), and return the account's devices."""
+    db = _services(request).db
+    region = await _resolve_region(request, body.region)
+    code = extract_oauth_code(body.pasted)
+    if not code:
+        raise HTTPException(
+            status_code=422,
+            detail="no auth code found — paste the FULL myapp://callback/?code=… "
+                   "URL from the browser address bar",
+        )
+    probe = RealMowerProvider(region=region, device_id="", auth_method="oauth")
+    try:
+        await probe._ensure_session()  # noqa: SLF001
+        assert probe.auth is not None
+        await probe.auth.exchange_oauth_code(code)
+        if not probe.auth.refresh_token:
+            raise HTTPException(
+                status_code=502,
+                detail="sign-in succeeded but returned no refresh token — "
+                       "run the Google flow again",
+            )
+        await probe.auth.get_aws_credentials()
+        devices = await probe.list_devices()
+        await db.set_setting("lymow_auth_method", "google")
+        await db.set_setting("lymow_refresh_token", probe.auth.refresh_token)
+        await db.set_setting("lymow_region", region)
+        _LOGGER.info("Google sign-in completed (tokens stored, not logged)")
+        return {"ok": True, "devices": devices}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _LOGGER.warning("oauth exchange failed: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="code exchange failed — the code is single-use and short-"
+                   "lived; redo the Google sign-in and paste the fresh URL",
+        ) from exc
+    finally:
+        await probe.stop()
+
+
+async def _resolve_region(request: Request, region: str | None) -> str:
+    if not region:
+        region = await _services(request).db.get_setting("lymow_region") \
+            or request.app.state.settings.region
+    if region not in API_ENDPOINTS:
+        raise HTTPException(status_code=422, detail=f"unknown region: {region}")
+    return region
 
 
 @router.get("/discovery/devices")
@@ -212,20 +298,25 @@ async def discovery_devices(request: Request, region: str | None = None) -> list
     after) and list the account's mower thing names. Read-only: touches
     the REST device list only — the mower itself is never commanded."""
     db = _services(request).db
+    method = await db.get_setting("lymow_auth_method") or "password"
     email = await db.get_setting("lymow_username")
     password = await db.get_setting("lymow_password")
-    if not email or not password:
+    refresh = await db.get_setting("lymow_refresh_token")
+    if method == "google":
+        if not refresh:
+            raise HTTPException(
+                status_code=409,
+                detail="complete Sign in with Google before discovery",
+            )
+    elif not email or not password:
         raise HTTPException(status_code=409,
                             detail="no Lymow credentials configured yet")
-    region = region or await db.get_setting("lymow_region") \
-        or request.app.state.settings.region
-    if region not in API_ENDPOINTS:
-        raise HTTPException(status_code=422, detail=f"unknown region: {region}")
-
-    from app.services.real_provider import RealMowerProvider
+    region = await _resolve_region(request, region)
 
     probe = RealMowerProvider(region=region, device_id="", email=email,
-                              password=password)
+                              password=password,
+                              auth_method="oauth" if method == "google" else "password",
+                              refresh_token=refresh)
     try:
         await probe._ensure_session()  # noqa: SLF001 — deliberate internal reuse
         await probe._login()

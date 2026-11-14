@@ -75,6 +75,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             provider.email = email
             provider.password = password
+            auth_method = await db.get_setting("lymow_auth_method") or "password"
+            provider.auth_method = "oauth" if auth_method == "google" else "password"
+            provider.refresh_token = await db.get_setting("lymow_refresh_token")
+
+            def _persist_refresh_token(token: str, _db=db) -> None:
+                # CognitoAuth may rotate the refresh token inside async
+                # tasks; schedule the DB write on the running loop.
+                asyncio.get_running_loop().create_task(
+                    _db.set_setting("lymow_refresh_token", token)
+                )
+
+            provider.on_refresh_token = _persist_refresh_token
+            have_creds = (
+                provider.refresh_token if provider.auth_method == "oauth"
+                else (email and password)
+            )
             region = await db.get_setting("lymow_region") or provider.region
             if region not in API_ENDPOINTS:
                 _LOGGER.error("stored region %r unknown — falling back to %s",
@@ -82,10 +98,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 region = provider.region
             provider.region = region
             provider.host = API_ENDPOINTS[provider.region]["iotDomain"]
-            if not email or not password:
+            if not have_creds:
                 _LOGGER.error(
-                    "provider=real but credentials are not configured "
-                    "— configure them in Settings; the console stays offline"
+                    "provider=real but no %s configured — use Settings "
+                    "(email+password or Sign in with Google); staying offline",
+                    "Google sign-in token" if provider.auth_method == "oauth"
+                    else "Lymow credentials",
                 )
             elif not device:
                 # No pinned device: auto-pick when the account has exactly

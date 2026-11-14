@@ -248,6 +248,92 @@ class TestSettings:
         assert "super" not in r.text  # no credential echo in errors
 
 
+class TestGoogleSignIn:
+    """Federated (Google) flow: url helper, code paste exchange, secrets."""
+
+    async def test_oauth_url_endpoint(self, api):
+        r = await api.get("/api/settings/oauth-url?region=eu-west-1")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["url"].startswith("https://eu-auth.lymow.com/login?")
+        assert "myapp://callback/" in body["redirect_hint"]
+
+    async def test_oauth_exchange_stores_refresh_token_masked(self, api, monkeypatch):
+        from app.lymow.auth import CognitoAuth
+        from app.services.real_provider import RealMowerProvider
+
+        async def fake_exchange(self, code):
+            assert code == "abc123"
+            self.id_token, self.access_token = "id", "acc"
+            self.refresh_token = "REFRESH-SECRET"
+
+        async def fake_aws(self):
+            pass
+
+        async def fake_list(self):
+            return [{"deviceThingName": "thing-1", "deviceName": "One Plus",
+                     "deviceState": "online"}]
+
+        monkeypatch.setattr(CognitoAuth, "exchange_oauth_code", fake_exchange)
+        monkeypatch.setattr(CognitoAuth, "get_aws_credentials", fake_aws)
+        monkeypatch.setattr(RealMowerProvider, "list_devices", fake_list)
+
+        r = await api.post("/api/settings/oauth-exchange", json={
+            "pasted": "myapp://callback/?code=abc123&state=z",
+            "region": "eu-west-1",
+        })
+        assert r.status_code == 200
+        assert r.json()["devices"][0]["deviceThingName"] == "thing-1"
+
+        s = (await api.get("/api/settings")).json()
+        assert s["lymow_auth_method"] == "google"
+        assert s["lymow_refresh_token"] == "***"
+        assert "REFRESH-SECRET" not in (await api.get("/api/settings")).text
+
+    async def test_oauth_exchange_rejects_paste_without_code(self, api):
+        r = await api.post("/api/settings/oauth-exchange", json={
+            "pasted": "myapp://callback/?error=access_denied",
+            "region": "eu-west-1",
+        })
+        assert r.status_code == 422
+
+    async def test_password_method_requires_both_fields(self, api):
+        r = await api.put("/api/settings/cloud", json={
+            "lymow_username": "u@e.com", "auth_method": "password",
+        })
+        assert r.status_code == 422
+
+    def test_google_boot_without_device_stays_offline(self, tmp_path, monkeypatch):
+        """google auth configured but no pinned device: auto-discovery is
+        attempted, fails (stubbed), and the console must NOT connect."""
+        from app.lymow.auth import CognitoAuth, LymowAuthError
+
+        async def explode_refresh(self):
+            raise LymowAuthError("network disabled in this test")
+
+        monkeypatch.setattr(CognitoAuth, "refresh_tokens", explode_refresh)
+
+        s = Settings(provider="real", data_dir=tmp_path,
+                     session_secret="k", _env_file=None)
+        import asyncio
+        from app.db import Database
+
+        async def seed():
+            db = Database(s.db_path)
+            await db.open()
+            await db.set_setting("lymow_auth_method", "google")
+            await db.set_setting("lymow_refresh_token", "rt")
+            await db.set_setting("lymow_region", "eu-west-1")
+            await db.close()
+
+        asyncio.run(seed())
+        app = create_app(s)
+        with TestClient(app) as client:
+            client.post("/api/auth/login", json={"password": "pw"})
+            snap = client.get("/api/state").json()
+            assert snap["online"] is False
+
+
 class TestWebSocket:
     def test_anonymous_ws_closed(self, sync_client):
         from starlette.websockets import WebSocketDisconnect

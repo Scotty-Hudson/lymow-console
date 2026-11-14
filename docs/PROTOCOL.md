@@ -41,6 +41,20 @@ Reference projects (cloned under `research/`):
 
 - Lymow cloud accounts are **AWS Cognito** user pools; sign-in via
   `pycognito` (`app/lymow/auth.py`).
+- **Federated accounts (Sign in with Google/Apple in the Lymow app)**
+  have no Cognito password. Verified flow (upstream Lymow-One-MQTT,
+  MIT): the app uses the **Cognito Hosted UI**
+  (`https://<region>-auth.lymow.com/login`, redirect_uri locked to
+  `myapp://callback/`). The console rebuilds that login page link, the
+  user signs in with Google in a browser tab, the final `myapp://`
+  redirect fails (expected), and the user pastes the failed URL back;
+  the console extracts the single-use auth code, exchanges it at
+  `/oauth2/token`, and stores the resulting **refresh token** (masked
+  secret, never logged) as the durable credential. Routine expiry is
+  handled automatically via `grant_type=refresh_token`; re-do the
+  Google flow only if Google/Lymow revokes it. Tokens are exchanged at
+  `cognito-identity` for temporary AWS credentials, like the native
+  path.
 - Verified region pool (`app/lymow/const.py` `API_ENDPOINTS`):
   `eu-west-1`, `us-east-2`, `ap-southeast-2`, `ap-east-1`. Each maps to a
   Lymow REST API domain and an AWS IoT domain.

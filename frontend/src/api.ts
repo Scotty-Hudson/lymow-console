@@ -44,6 +44,15 @@ export const api = {
     request<{ deviceThingName: string; deviceName: string; deviceState: string | null }[]>(
       `/api/discovery/devices${region ? `?region=${encodeURIComponent(region)}` : ""}`,
     ),
+  oauthUrl: (region?: string) =>
+    request<{ url: string; region: string; redirect_hint: string }>(
+      `/api/settings/oauth-url${region ? `?region=${encodeURIComponent(region)}` : ""}`,
+    ),
+  oauthExchange: (pasted: string, region?: string) =>
+    request<{ ok: boolean; devices: { deviceThingName: string; deviceName: string; deviceState: string | null }[] }>(
+      "/api/settings/oauth-exchange",
+      { method: "POST", body: JSON.stringify({ pasted, region }) },
+    ),
 };
 
 /** Live telemetry via WebSocket; reconnects with backoff. */

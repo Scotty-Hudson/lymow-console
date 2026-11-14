@@ -75,7 +75,8 @@ button.ghost {
 }
 
 input,
-select {
+select,
+textarea {
   font: inherit;
   background: var(--bg-inset);
   color: var(--fg);

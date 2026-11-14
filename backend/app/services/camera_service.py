@@ -30,7 +30,8 @@ from app.services.state_service import MowerStateService
 
 _LOGGER = logging.getLogger(__name__)
 
-FRAME_INTERVAL_S = 0.4          # ~2.5 fps cap for the relay
+FRAME_INTERVAL_S = 0.4          # simulator frame pacing (real feed: RELAY_FPS)
+RELAY_FPS = 15                  # ~mower camera native rate; 2.5 fps looked like a slideshow
 FFMPEG_BINARIES = ("ffmpeg", "avconv")
 
 
@@ -157,7 +158,7 @@ class CameraService:
                 [
                     binary, "-hide_banner", "-loglevel", "error",
                     "-rtsp_transport", "tcp", "-i", url,
-                    "-vf", f"fps={int(1 / FRAME_INTERVAL_S)}",
+                    "-vf", f"fps={RELAY_FPS}",
                     "-f", "image2pipe", "-vcodec", "mjpeg",
                     "-q:v", "6", "pipe:1",
                 ],

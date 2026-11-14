@@ -274,11 +274,14 @@ async def oauth_exchange(body: OAuthExchangeIn, request: Request) -> dict[str, A
     except HTTPException:
         raise
     except Exception as exc:
-        _LOGGER.warning("oauth exchange failed: %s", type(exc).__name__)
+        _LOGGER.warning("oauth exchange failed (region=%s, %s): %s",
+                        region, type(exc).__name__, exc)
         raise HTTPException(
             status_code=502,
-            detail="code exchange failed — the code is single-use and short-"
-                   "lived; redo the Google sign-in and paste the fresh URL",
+            detail=f"code exchange failed ({type(exc).__name__}) — the code is "
+                   "single-use and short-lived; make sure the Cloud region "
+                   "matches your Lymow account, redo the Google sign-in and "
+                   "paste the fresh URL",
         ) from exc
     finally:
         await probe.stop()

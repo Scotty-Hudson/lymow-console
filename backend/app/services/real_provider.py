@@ -70,6 +70,9 @@ class RealMowerProvider(MowerProvider):
         self._shutting_down = False
         self._reconnecting = False
         self._state_ref: dict[str, Any] = {}  # set by MowerStateService
+        # Mower LAN IP from the REST device info (authoritative fallback:
+        # the mower only publishes deviceInfo on the MQTT feed sporadically).
+        self.rest_ip_address: str | None = None
 
     # ── Lifecycle ───────────────────────────────────────────────
 
@@ -209,6 +212,7 @@ class RealMowerProvider(MowerProvider):
             self._rest_online = ds == "online"
             ip = info.get("ipAddress") or info.get("ip_address")
             if ip:
+                self.rest_ip_address = ip
                 self._state_ref.setdefault("rest_ip_address", ip)
                 self._state_ref["rest_ip_address"] = ip
             fw = (

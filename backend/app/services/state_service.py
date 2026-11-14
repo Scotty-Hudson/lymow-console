@@ -132,6 +132,10 @@ class MowerStateService:
     def snapshot(self) -> dict[str, Any]:
         """Full dashboard state document (also sent on every WS push)."""
         t = ltelemetry.telemetry_from_wire(self.state)
+        if t.get("ip_address") is None:
+            rest_ip = getattr(self.provider, "rest_ip_address", None)
+            if rest_ip:
+                t["ip_address"] = rest_ip
         status = ltelemetry.describe_status(t)
         row = state_matrix.lookup(
             work_status=t.get("work_status") or 0,

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import struct
 import subprocess
@@ -50,6 +51,22 @@ class CameraService:
         self._unavailable_reason: str | None = None
         self._stopping = False
 
+    @staticmethod
+    def _find_ffmpeg() -> str | None:
+        """Locate an ffmpeg binary: system install first, then the pip
+        wheel fallback (imageio-ffmpeg ships a static build — works
+        without sudo; `pip install imageio-ffmpeg`)."""
+        binary = shutil.which(FFMPEG_BINARIES[0]) or shutil.which(FFMPEG_BINARIES[1])
+        if binary:
+            return binary
+        try:
+            import imageio_ffmpeg
+
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+            return exe if exe and os.path.exists(exe) else None
+        except Exception:
+            return None
+
     # ── public API ──────────────────────────────────────────────
 
     def status(self) -> dict:
@@ -66,10 +83,11 @@ class CameraService:
     async def start(self) -> None:
         if self.provider.simulator:
             return  # frames are synthesized on demand
-        if shutil.which(FFMPEG_BINARIES[0]) or shutil.which(FFMPEG_BINARIES[1]):
+        if self._find_ffmpeg():
             return  # lazily start the subprocess on first stream request
         self._unavailable_reason = (
-            "ffmpeg is not installed (sudo apt install ffmpeg) — RTSP relay disabled"
+            "ffmpeg is not installed (sudo apt install ffmpeg, or "
+            "pip install imageio-ffmpeg) — RTSP relay disabled"
         )
 
     async def stop(self) -> None:
@@ -85,6 +103,12 @@ class CameraService:
 
     async def stream(self) -> AsyncIterator[bytes]:
         """Yield JPEG/PNG frame payloads for the MJPEG response."""
+        if self._unavailable_reason and self._find_ffmpeg():
+            # A previously dropped RTSP source is retryable once ffmpeg
+            # exists — clear the latch so the browser's "retry" works.
+            _LOGGER.info("camera: retrying after earlier failure: %s",
+                         self._unavailable_reason)
+            self._unavailable_reason = None
         if self._unavailable_reason:
             raise CameraUnavailable(self._unavailable_reason)
         if self.provider.simulator:
@@ -106,7 +130,9 @@ class CameraService:
 
     def _rtsp_url(self) -> str:
         t = self.state.snapshot()["telemetry"]
-        ip = t.get("ip_address")
+        # The live mower publishes deviceInfo only sporadically on the
+        # MQTT feed; the REST device-info poll is the reliable IP source.
+        ip = t.get("ip_address") or getattr(self.provider, "rest_ip_address", None)
         if not ip:
             raise CameraUnavailable(
                 "mower IP unknown yet (wait for a telemetry broadcast)"
@@ -116,7 +142,7 @@ class CameraService:
     def _ensure_ffmpeg(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
             return
-        binary = shutil.which(FFMPEG_BINARIES[0]) or shutil.which(FFMPEG_BINARIES[1])
+        binary = self._find_ffmpeg()
         if binary is None:
             raise CameraUnavailable("ffmpeg not installed")
         url = self._rtsp_url()

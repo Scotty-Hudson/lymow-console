@@ -24,7 +24,12 @@ browser ──HTTP/WS── backend (FastAPI, localhost:8384) ──MQTT/WSS+RES
   **never auto-retried** (the firmware silently rejects; commands are not
   idempotent).
 - **Camera** — the mower's LAN RTSP feed relayed through the backend
-  (the browser never touches the mower). Optional; needs `ffmpeg`.
+  (the browser never touches the mower). Needs ffmpeg: either
+  `sudo apt install ffmpeg` **or** the sudo-free wheel
+  (`pip install "lymow-console-backend[camera]"` in the venv — a static
+  ffmpeg binary; system install always wins). The relay requires the
+  backend host to be able to route to the mower's LAN IP on port 10022
+  (same subnet not required).
 - **History & command audit** in local SQLite.
 - **Simulated mower** (`LYMOW_PROVIDER=sim`, the default) — a
   protocol-faithful fake mower for safe development; tests prove it can

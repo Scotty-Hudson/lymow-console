@@ -16,7 +16,7 @@ Type=simple
 User=scotty
 Group=scotty
 WorkingDirectory=/home/scotty/repos/lymow-console/backend
-ExecStart=/home/scotty/repos/lymow-console/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8384
+ExecStart=/home/scotty/repos/lymow-console/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8384 --timeout-graceful-shutdown 5
 Environment=LYMOW_PROVIDER=sim
 Environment=LYMOW_DATA_DIR=/home/scotty/.local/share/lymow-console
 Restart=on-failure

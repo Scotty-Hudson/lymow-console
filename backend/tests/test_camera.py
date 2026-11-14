@@ -1,7 +1,9 @@
 """Camera service: simulated frame renderer + availability posture."""
 from __future__ import annotations
 
+import shutil
 import struct
+import sys
 import zlib
 
 import pytest
@@ -70,3 +72,44 @@ class TestSimFrames:
             assert url.startswith("rtsp://192.168.50.42:10022/")
         finally:
             mower.simulator = True
+
+    def test_rest_ip_fallback_when_mqtt_deviceinfo_absent(self):
+        """Live mower idles without deviceInfo: the REST-poll IP is used."""
+        from app.services.provider import MowerProvider
+        from app.services.state_service import MowerStateService
+
+        class QuietProvider(MowerProvider):
+            def __init__(self):
+                super().__init__("quiet")
+                self.rest_ip_address = "192.168.10.99"
+
+            async def start(self): pass
+            async def stop(self): pass
+            def is_connected(self): return True
+            async def publish_pbinput(self, raw): pass
+            async def list_devices(self): return []
+
+        state = MowerStateService(QuietProvider())
+        cam = CameraService(state.provider, state)
+        assert cam._rtsp_url() == "rtsp://192.168.10.99:10022/h264ESVideoTest"
+
+
+class TestFfmpegDiscovery:
+    def test_prefers_system_binary(self, monkeypatch):
+        monkeypatch.setattr(shutil, "which",
+                            lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+        assert CameraService._find_ffmpeg() == "/usr/bin/ffmpeg"
+
+    def test_falls_back_to_pip_wheel(self, monkeypatch):
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+        try:
+            import imageio_ffmpeg
+        except ImportError:
+            pytest.skip("imageio-ffmpeg not installed")
+        found = CameraService._find_ffmpeg()
+        assert found and "ffmpeg" in found.lower()
+
+    def test_none_when_never_available(self, monkeypatch):
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+        monkeypatch.setitem(sys.modules, "imageio_ffmpeg", None)
+        assert CameraService._find_ffmpeg() is None

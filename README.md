@@ -1,7 +1,7 @@
 # lymow-console
 
 A standalone web console to **monitor and control a Lymow One / One Plus
-robotic mower on your Ubuntu LAN** — no Home Assistant, no cloud UI.
+robotic mower on your LAN** — no Home Assistant, no cloud UI.
 FastAPI backend + React/TypeScript/Vite frontend, speaking the community
 reverse-engineered mower protocol.
 

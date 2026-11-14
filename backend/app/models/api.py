@@ -28,7 +28,8 @@ class ZoneConfigIn(BaseModel):
     Field names match the JSON the frontend sends (camelCase)."""
     model_config = ConfigDict(populate_by_name=True)
 
-    enable_rr: bool = Field(default=True, alias="enableRr")
+    # omitted (None) = carry forward from the mower's cached config
+    enable_rr: bool | None = Field(default=None, alias="enableRr")
     recharge_bat: int | None = Field(default=None, ge=1, le=100, alias="rechargeBat")
     resume_bat: int | None = Field(default=None, ge=1, le=100, alias="resumeBat")
 

@@ -143,6 +143,19 @@ class MowerStateService:
             return True
         return (time.monotonic() - self.last_pboutput_mono) > STALE_AFTER_S
 
+    def current_row(self) -> state_matrix.StateRow:
+        """Matrix row with the single no-telemetry gate: no robotInfo seen
+        yet -> DEFAULT_ROW (unknown state offers no buttons). Single home —
+        dashboard and command gate must always agree on what is allowed."""
+        if self.state.get("robotInfo") is None:
+            return state_matrix.DEFAULT_ROW
+        t = ltelemetry.telemetry_from_wire(self.state)
+        return state_matrix.lookup(
+            work_status=t.get("work_status") or 0,
+            robot_status=t.get("robot_status") or 0,
+            is_recharging=bool(t.get("is_recharging")),
+        )
+
     def snapshot(self) -> dict[str, Any]:
         """Full dashboard state document (also sent on every WS push)."""
         t = ltelemetry.telemetry_from_wire(self.state)
@@ -155,15 +168,7 @@ class MowerStateService:
             if rest_fw:
                 t["fw_version"] = rest_fw
         status = ltelemetry.describe_status(t)
-        if self.state.get("robotInfo") is None:
-            # No telemetry yet: unknown state — offer NO buttons.
-            row = state_matrix.DEFAULT_ROW
-        else:
-            row = state_matrix.lookup(
-                work_status=t.get("work_status") or 0,
-                robot_status=t.get("robot_status") or 0,
-                is_recharging=bool(t.get("is_recharging")),
-            )
+        row = self.current_row()
         catalog = self.state.get("zone_catalog")
         task_zones = [
             {"hash_id": z.hash_id, "name": z.name, "mow_order": z.mow_order}

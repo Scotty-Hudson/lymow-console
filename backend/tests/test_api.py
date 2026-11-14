@@ -187,6 +187,21 @@ class TestCommands:
         r = await api.put("/api/config/return-to-dock", json={"enableRr": True})
         assert r.status_code == 200
 
+    async def test_command_crash_leaves_one_audit_row(self, api, monkeypatch):
+        """Finding 6: a crash inside a command (not a refusal) must still
+        appear in the audit log — exactly one row, outcome 'error:...'."""
+        from app.services import command_service as cs_mod
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("encoder exploded")
+
+        monkeypatch.setattr(cs_mod, "encode_set_rr_config", boom)
+        with pytest.raises(RuntimeError):
+            await api.put("/api/config/return-to-dock", json={"enableRr": True})
+        rows = (await api.get("/api/audit")).json()
+        errors = [x for x in rows if str(x["outcome"]).startswith("error:")]
+        assert len(errors) == 1
+
     async def test_query_map_and_schedules(self, api):
         r = await api.post("/api/commands/query-map")
         assert r.status_code == 200

@@ -20,7 +20,6 @@ from typing import Any
 
 from app.db import Database
 from app.lymow import state as lstate
-from app.lymow import state_matrix
 from app.lymow.const import (
     USER_CTRL_CLEAN,
     USER_CTRL_DOCK,
@@ -72,6 +71,11 @@ def _audited(action: str):
                 detail = {"zones": kwargs["zones"]} if kwargs.get("zones") else None
                 await self._audit(action, 0, detail, f"rejected:{exc}")
                 raise
+            except Exception as exc:
+                # every failed attempt leaves exactly one audit row —
+                # crashes included (_send audits outcomes only, not errors)
+                await self._audit(action, 0, None, f"error:{exc}")
+                raise
         return wrapper
     return deco
 
@@ -89,7 +93,7 @@ class CommandService:
 
     @_audited("start")
     async def start(self, zones: list[str] | None = None) -> dict[str, Any]:
-        row = self._current_row()
+        row = self.state.current_row()
         ctrl = row.start_mowing
         if ctrl is None:
             raise CommandRejected(
@@ -114,7 +118,7 @@ class CommandService:
 
     @_audited("pause")
     async def pause(self) -> dict[str, Any]:
-        row = self._current_row()
+        row = self.state.current_row()
         ctrl = row.pause
         if ctrl is None:
             raise CommandRejected(f"pause not allowed while activity={row.activity}")
@@ -122,7 +126,7 @@ class CommandService:
 
     @_audited("resume")
     async def resume(self) -> dict[str, Any]:
-        row = self._current_row()
+        row = self.state.current_row()
         ctrl = row.start_mowing
         if ctrl not in (USER_CTRL_RESUME, USER_CTRL_RESUME_DOCK):
             raise CommandRejected("no saved task to resume in this state")
@@ -131,7 +135,7 @@ class CommandService:
     @_audited("dock")
     async def dock(self) -> dict[str, Any]:
         """Safe dock: matrix picks keep-progress (33) vs plain (2) variant."""
-        row = self._current_row()
+        row = self.state.current_row()
         ctrl = row.dock
         if ctrl is None:
             raise CommandRejected(f"dock not allowed while activity={row.activity}")
@@ -162,10 +166,12 @@ class CommandService:
         reset to firmware defaults."""
         cached = self.state.state.get("robotConfig")
         rr = getattr(cached, "rrConfig", None) if cached is not None else None
-        # "or" not .get-default: the route passes explicit None for
-        # omitted fields, so the key exists and .get's default never fires.
+        # "or"/None carry-forward: the route passes explicit None for
+        # omitted fields, so .get's default never fires. For the flag an
+        # explicit None check — "or" would swallow a valid False.
+        enable = fields.get("enableRr")
         payload = encode_set_rr_config(
-            enable_rr=fields.get("enableRr", bool(getattr(rr, "enableRr", True))),
+            enable_rr=bool(getattr(rr, "enableRr", True) if enable is None else enable),
             recharge_bat=int(fields.get("rechargeBat")
                              or getattr(rr, "rechargeBat", 30)),
             resume_bat=int(fields.get("resumeBat")
@@ -189,16 +195,6 @@ class CommandService:
 
     # ── internals ───────────────────────────────────────────────
 
-    def _current_row(self) -> state_matrix.StateRow:
-        if self.state.state.get("robotInfo") is None:
-            return state_matrix.DEFAULT_ROW  # no telemetry yet — no buttons
-        t = self.state.snapshot()["telemetry"]
-        return state_matrix.lookup(
-            work_status=t.get("work_status") or 0,
-            robot_status=t.get("robot_status") or 0,
-            is_recharging=bool(t.get("is_recharging")),
-        )
-
     def _require_confirm(self, action: str, confirm: bool) -> None:
         if not confirm:
             raise CommandRejected(
@@ -215,9 +211,8 @@ class CommandService:
         pre_status = self._statuses()
         try:
             await self.provider.publish_pbinput(payload)
-        except ProviderError as exc:
-            await self._audit(action, user_ctrl, detail, f"error:{exc}")
-            raise
+        except ProviderError:
+            raise  # audited once by the _audited wrapper
         if not expected:
             await self._audit(action, user_ctrl, detail, "sent")
             return {"action": action, "outcome": "sent", "confirmed": True}

@@ -285,3 +285,33 @@ class TestCommandWatchdog:
         rows = await db.list_audit()
         assert rows[0]["outcome"] == "sent-unconfirmed"
         await db.close()
+
+
+class TestRrCarryForward:
+    """Partial rr writes must carry forward from the mower's cached config —
+    never silently flip enableRr on (audit finding 5) and never int(None)."""
+
+    async def test_partial_body_carries_forward_cached_values(self, sim, tmp_path):
+        from app.db import Database
+        from app.services.command_service import CommandService
+        from app.services.state_service import MowerStateService
+
+        mower, _ = sim
+        await mower.start()
+        state = MowerStateService(mower)
+        state.attach()
+        db = Database(tmp_path / "rr.db")
+        await db.open()
+        cs = CommandService(mower, state, db)
+
+        await cs.set_rr_config(enableRr=False, rechargeBat=20, resumeBat=80)
+        assert mower.rr_config["enableRr"] is False
+
+        # what the route sends for PUT {"rechargeBat": 40}: None elsewhere
+        await cs.set_rr_config(enableRr=None, rechargeBat=40, resumeBat=None)
+        assert mower.rr_config == {
+            "enableRr": False,  # carried, NOT flipped to on
+            "rechargeBat": 40,
+            "resumeBat": 80,    # carried
+        }
+        await db.close()

@@ -48,8 +48,6 @@ That's the whole install: uv fetches Python and every dependency
 (including a static ffmpeg for the camera), and the console opens at
 <http://127.0.0.1:8384>. It starts on the **simulator**; connect your
 real mower via the Settings page (Google sign-in + device discovery).
-The repo is currently **private** — installers need GitHub access; once
-it is on PyPI the command is just `uvx lymow-console`.
 
 ## Quick start (Ubuntu 22.04/24.04)
 

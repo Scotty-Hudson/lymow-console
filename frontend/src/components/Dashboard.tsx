@@ -8,6 +8,17 @@ const RTK_LABELS: Record<number, string> = {
 
 const NET_LABELS: Record<number, string> = { 0: "none", 1: "WiFi", 2: "LTE" };
 
+// Quality tier derived from the mower's own reported horizontal accuracy.
+// Thresholds follow the community-observed RTK states (FIX ~2 cm,
+// FLOAT ~40 cm); the tier is our label, the firmware's rtkStatus enum —
+// when it is ever published — wins over this derivation.
+function accTier(m: number): string {
+  if (m <= 0.05) return "cm-level";
+  if (m <= 0.5) return "dm-level";
+  if (m <= 2) return "metre-level";
+  return "degraded";
+}
+
 function fmtDuration(s?: number | null): string {
   if (s === undefined || s === null) return "—";
   const h = Math.floor(s / 3600);
@@ -54,13 +65,23 @@ export default function Dashboard({ snap }: { snap: StateSnapshot | null }) {
           ) : null}
         </div>
         <div className="stat">
-          <div className="k">RTK</div>
+          <div className="k">Positioning</div>
           <div className="v">
-            {t.rtk_status != null ? RTK_LABELS[t.rtk_status] ?? `code ${t.rtk_status}` : "—"}
+            {t.rtk_status != null
+              ? RTK_LABELS[t.rtk_status] ?? `code ${t.rtk_status}`
+              : t.horizontal_accuracy_m != null
+                ? accTier(t.horizontal_accuracy_m)
+                : "—"}
           </div>
-          {t.rtk_precision_m != null && (
-            <div className="k">±{t.rtk_precision_m.toFixed(2)} m · {t.rtk_satellite_count ?? "?"} sats</div>
+          {t.horizontal_accuracy_m != null && (
+            <div className="k">
+              ±{(t.horizontal_accuracy_m * 100).toFixed(0)} cm · {t.num_satellites ?? "?"} sats
+            </div>
           )}
+          <div className="k">
+            algo: {{ 0: "none", 1: "waiting", 2: "initializing", 3: "running" }[t.loc_node_status ?? -1] ?? "?"}
+            {t.position_quality != null ? ` · Q${t.position_quality}` : ""}
+          </div>
         </div>
         <div className="stat">
           <div className="k">Network</div>

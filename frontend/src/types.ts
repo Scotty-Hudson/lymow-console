@@ -16,6 +16,8 @@ export interface Telemetry {
   remain_clean_time_s?: number;
   map_area_m2?: number;
   horizontal_accuracy_m?: number;
+  vertical_accuracy_m?: number;
+  position_quality?: number;
   loc_node_status?: number;
   num_satellites?: number;
   rtk_status?: number;

@@ -44,6 +44,8 @@ def telemetry_from_wire(state: dict) -> dict:
     li = state.get("localizationInfo")
     if li is not None:
         t["horizontal_accuracy_m"] = getattr(li, "horizontalAccuracy", None)
+        t["vertical_accuracy_m"] = getattr(li, "verticalAccuracy", None)
+        t["position_quality"] = getattr(li, "positionQuality", None)
         t["loc_node_status"] = getattr(li, "locNodeStatus", None)
         t["num_satellites"] = getattr(li, "numSatellites", None)
     l1 = state.get("rtkDiagnosticL1")

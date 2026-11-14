@@ -1,7 +1,10 @@
 """Tests for state.py merge/derivation rules used by the dashboard."""
 from __future__ import annotations
 
+import pytest
+
 from app.lymow import lymow_extracted_pb2 as pb
+from app.lymow import telemetry as ltelemetry
 from app.lymow.state import merge_pboutput
 
 
@@ -78,3 +81,23 @@ class TestMergeRules:
         merge_pboutput(state, m2)
         assert state["robotConfig"].rrConfig.enableRr is False
         assert state["robotConfig"].rrConfig.rechargeBat == 40
+
+
+class TestTelemetryDerivation:
+    def test_localization_fields_flow_to_dashboard(self):
+        """Real One Plus fw sends positioning ONLY in localizationInfo
+        (rtkDiagnosticL1 is never broadcast) — the dashboard depends on
+        these keys being present in the derived telemetry."""
+        state: dict = {}
+        m = _msg()
+        m.localizationInfo.horizontalAccuracy = 0.0136
+        m.localizationInfo.verticalAccuracy = 0.028
+        m.localizationInfo.positionQuality = 3
+        m.localizationInfo.locNodeStatus = 1
+        m.localizationInfo.numSatellites = 10
+        merge_pboutput(state, m)
+        t = ltelemetry.telemetry_from_wire(state)
+        assert t["horizontal_accuracy_m"] == pytest.approx(0.0136)
+        assert t["vertical_accuracy_m"] == pytest.approx(0.028)
+        assert t["position_quality"] == 3
+        assert t["num_satellites"] == 10

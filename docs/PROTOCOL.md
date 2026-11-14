@@ -36,6 +36,17 @@ Reference projects (cloned under `research/`):
 - Telemetry cadence: the mower broadcasts `PbOutput` roughly every 30 s
   idle, faster while a task is active. Three missed broadcasts ⇒ the
   console marks telemetry **stale** (`STALE_AFTER_S = 95`).
+- **Verified on fw v2.1.51.2 (One Plus, 2026-11):** broadcasts carry
+  `robotInfo`, `localizationInfo`, `pose`, `cleanInfo`,
+  `chargingStationLoc`, `wifiConfigRes`, `debugSetting` (+ query
+  responses). `deviceInfo`, `netDetailInfo`, `rtkDiagnosticL1/L2` are
+  **never sent**, and the query userCtrls `QUERY_NET_DETAIL(53)`,
+  `QUERY_RTK_L1(57)`, `QUERY_RTK_L2(58)` are silently ignored — the
+  console therefore derives positioning quality from
+  `localizationInfo.horizontalAccuracy` (cm-level ⇔ RTK fix; observed
+  0.014 m @ 10 sats) and the mower IP from the REST device-info poll.
+  `positionQuality` is transmitted but has **no documented meaning**
+  (upstream deliberately ignores it for decisions) — shown raw only.
 
 ## 2. Cloud authentication
 

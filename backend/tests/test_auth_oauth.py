@@ -22,6 +22,7 @@ class TestBuildOauthUrl:
         assert f"client_id={cfg['client_id']}" in url
         assert "myapp%3A%2F%2Fcallback%2F" in url  # encoded redirect_uri
         assert "response_type=code" in url
+        assert "identity_provider=Google" in url
 
 
 class TestExtractOauthCode:

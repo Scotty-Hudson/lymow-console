@@ -39,12 +39,15 @@ _LOGGER = logging.getLogger(__name__)
 OAUTH_REDIRECT_URI = "myapp://callback/"  # only redirect Cognito accepts
 
 
-def build_oauth_url(region: str) -> str:
+def build_oauth_url(region: str, identity_provider: str = "Google") -> str:
     """Cognito hosted-UI link for federated login.
 
     The federated client only accepts myapp://callback/ as redirect_uri
     (verified empirically upstream); signing in there fails the final
     redirect, and the user copies the code from that failed URL.
+    identity_provider=Google preselects the federated IdP so the page
+    doesn't open on the email+password form (the app's own flow uses
+    identity_provider too — ha-lymow packet capture).
     """
     cfg = COGNITO_CONFIG[region]
     qs = urllib.parse.urlencode({
@@ -52,6 +55,7 @@ def build_oauth_url(region: str) -> str:
         "response_type": "code",
         "scope": "openid aws.cognito.signin.user.admin",
         "redirect_uri": OAUTH_REDIRECT_URI,
+        "identity_provider": identity_provider,
     })
     return f"https://{cfg['hosted_ui_domain']}/login?{qs}"
 

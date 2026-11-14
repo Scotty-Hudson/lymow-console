@@ -25,16 +25,31 @@ browser ──HTTP/WS── backend (FastAPI, localhost:8384) ──MQTT/WSS+RES
   **never auto-retried** (the firmware silently rejects; commands are not
   idempotent).
 - **Camera** — the mower's LAN RTSP feed relayed through the backend
-  (the browser never touches the mower). Needs ffmpeg: either
-  `sudo apt install ffmpeg` **or** the sudo-free wheel
-  (`pip install "lymow-console-backend[camera]"` in the venv — a static
-  ffmpeg binary; system install always wins). The relay requires the
-  backend host to be able to route to the mower's LAN IP on port 10022
-  (same subnet not required).
+  (the browser never touches the mower). A static ffmpeg binary ships as
+  a dependency (platform-matched wheel); a system ffmpeg, if installed,
+  always wins. The relay requires the backend host to be able to route
+  to the mower's LAN IP on port 10022 (same subnet not required).
 - **History & command audit** in local SQLite.
 - **Simulated mower** (`LYMOW_PROVIDER=sim`, the default) — a
   protocol-faithful fake mower for safe development; tests prove it can
   never touch the network.
+
+## Quick start — any OS (Windows / macOS / Linux)
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
+once — on Windows PowerShell `winget install astral-sh.uv`, on
+macOS/Linux `curl -LsSf https://astral.sh/uv/install.sh | sh` — then:
+
+```bash
+uvx --from "git+https://github.com/OWNER/lymow-console#subdirectory=backend" lymow-console
+```
+
+That's the whole install: uv fetches Python and every dependency
+(including a static ffmpeg for the camera), and the console opens at
+<http://127.0.0.1:8384>. It starts on the **simulator**; connect your
+real mower via the Settings page (Google sign-in + device discovery).
+Replace `OWNER` with the GitHub owner until this is on PyPI — then it
+is just `uvx lymow-console`.
 
 ## Quick start (Ubuntu 22.04/24.04)
 

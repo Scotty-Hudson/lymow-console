@@ -7,8 +7,9 @@ __pycache__/
 
 # node / vite
 frontend/node_modules/
-frontend/dist/
 *.tsbuildinfo
+# NOTE: the built UI lives in backend/app/static and IS committed —
+# it is what pip/uvx installs. `npm run build` regenerates it.
 
 # local secrets & runtime data
 .env

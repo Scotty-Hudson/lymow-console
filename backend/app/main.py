@@ -30,8 +30,10 @@ from app.services.telemetry_service import TelemetryHub
 
 _LOGGER = logging.getLogger(__name__)
 
-# lymow-console/frontend/dist (repo root = parents[2] of backend/app/main.py)
-STATIC_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+# The built frontend lives inside the package so the console is one
+# installable unit (uvx / pip). Rebuild with `npm run build` in
+# frontend/ and commit the output.
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def _make_provider(settings: Settings, db: Database):
@@ -192,8 +194,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 app = create_app()
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console entry point installed by pip/uvx (command: lymow-console).
+
+    Starts on the safe simulator; the real mower is connected in the
+    browser's Settings page. systemd deploys use uvicorn directly.
+    """
+    import threading
+    import webbrowser
+
     import uvicorn
 
     s = get_settings()
-    uvicorn.run("app.main:app", host=s.host, port=s.port, reload=False)
+    url = f"http://{s.host}:{s.port}"
+    print(f"lymow-console -> {url}  (simulator until you connect your mower)")
+    threading.Timer(1.5, webbrowser.open, [url]).start()
+    uvicorn.run(create_app(s), host=s.host, port=s.port)
+
+
+if __name__ == "__main__":
+    run()

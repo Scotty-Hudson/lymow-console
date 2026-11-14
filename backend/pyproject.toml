@@ -1,5 +1,5 @@
 [project]
-name = "lymow-console-backend"
+name = "lymow-console"
 version = "0.1.0"
 description = "Web control center for the Lymow One / One Plus robotic mower"
 requires-python = ">=3.12"
@@ -18,7 +18,13 @@ dependencies = [
     "pycognito==2024.5.1",
     "aiosqlite>=0.20",
     "itsdangerous>=2.2",
+    # Sudo-free / installer-friendly camera relay: static ffmpeg wheel
+    # (platform-matched by pip). A system ffmpeg, if installed, wins.
+    "imageio-ffmpeg>=0.4.11",
 ]
+
+[project.scripts]
+lymow-console = "app.main:run"
 
 [project.optional-dependencies]
 dev = [
@@ -26,16 +32,18 @@ dev = [
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
 ]
-# Sudo-free camera relay: static ffmpeg wheel used when no system
-# ffmpeg is installed (system ffmpeg, if present, always wins).
-camera = [
-    "imageio-ffmpeg>=0.4.11",
-]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["static/**"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-
-[tool.setuptools.packages.find]
-include = ["app*"]
